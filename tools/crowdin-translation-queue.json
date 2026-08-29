@@ -1,0 +1,11 @@
+{
+  "entries": [
+    {
+      "source": "IMAP/SMTP login (optional)",
+      "context": "desk/src/components/Settings/emailConfig.ts:129",
+      "languageId": "sv-SE",
+      "translation": "IMAP/SMTP-inloggning (valfritt)",
+      "note": "Submit after the upstream POT workflow has exposed this source string in Crowdin."
+    }
+  ]
+}
