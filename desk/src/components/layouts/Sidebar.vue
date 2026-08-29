@@ -219,7 +219,7 @@ const showOnboardingBanner = computed(() => {
   return (
     !isCustomerPortal.value &&
     !isOnboardingStepsCompleted.value &&
-    authStore.isManager
+    (authStore.isManager || authStore.isAdmin)
   );
 });
 
@@ -482,7 +482,7 @@ async function getGeneralCategory() {
 }
 
 function setUpOnboarding() {
-  if (!authStore.isManager) return;
+  if (!authStore.isManager && !authStore.isAdmin) return;
   setUp(steps);
   useShortcut({ key: "h", meta: true }, () => {
     showHelpModal.value = !showHelpModal.value;
