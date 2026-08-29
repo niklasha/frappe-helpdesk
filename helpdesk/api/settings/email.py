@@ -14,6 +14,7 @@ def create_email_account(data: dict[str, Any]):
         return frappe.throw(_("Service not supported"))
 
     try:
+        login_id = (data.get("login_id") or "").strip()
         email_doc = frappe.get_doc(
             {
                 "doctype": "Email Account",
@@ -42,6 +43,8 @@ def create_email_account(data: dict[str, Any]):
         else:
             if service == "Custom":
                 email_doc.service = ""
+                email_doc.login_id_is_different = bool(login_id)
+                email_doc.login_id = login_id or None
                 email_doc.domain = data.get("domain")
                 email_doc.email_server = data.get("email_server")
                 email_doc.incoming_port = data.get("incoming_port")

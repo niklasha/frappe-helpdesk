@@ -78,7 +78,11 @@
                     :label="field.label"
                     :name="field.name"
                     :type="field.type"
-                    :placeholder="field.placeholder"
+                    :placeholder="
+                      field.name === 'login_id'
+                        ? state.email_id
+                        : field.placeholder
+                    "
                   />
                 </div>
               </div>
@@ -185,6 +189,7 @@ import EmailProviderIcon from "./EmailProviderIcon.vue";
 interface EmailAccountBaseState {
   email_account_name: string;
   email_id: string;
+  login_id: string;
   service: string;
   enable_incoming: boolean;
   enable_outgoing: boolean;
@@ -228,6 +233,7 @@ const state = reactive<EmailAccountProviderAuthState>({
   service: "",
   email_account_name: "",
   email_id: "",
+  login_id: "",
   password: "",
   api_key: "",
   api_secret: "",
@@ -346,9 +352,12 @@ function buildCreatePayload() {
   }
 
   if (state.service === "Custom") {
+    const loginId = state.login_id.trim();
     return {
       ...commonPayload,
       password: state.password,
+      login_id_is_different: Boolean(loginId),
+      login_id: loginId || undefined,
       ...customState,
     };
   }
