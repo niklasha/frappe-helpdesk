@@ -303,6 +303,12 @@ class HDTicket(Document):
     def set_ticket_type(self):
         if self.ticket_type:
             return
+        subject = (self.subject or "").lower()
+        if "order" in subject:
+            order_type = frappe.db.get_value("HD Ticket Type", {"name": "Order"}, "name")
+            if order_type:
+                self.ticket_type = order_type
+                return
         self.ticket_type = (
             frappe.db.get_single_value("HD Settings", "default_ticket_type") or ""
         )
