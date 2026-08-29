@@ -193,6 +193,7 @@ import {
   dayjsLocal,
   toast,
 } from "frappe-ui";
+import { useOnboarding } from "frappe-ui/frappe";
 import { computed, inject, nextTick, ref, useTemplateRef, watch } from "vue";
 import MultipleAvatar from "../MultipleAvatar.vue";
 import UserAvatar from "../UserAvatar.vue";
@@ -225,6 +226,7 @@ const { getUser } = useUserStore();
 const currentUser = computed(() => getUser("")); // empty string returns current user
 const agentStatusStore = useAgentStatusStore();
 const currentAgentName = window.agent;
+const { updateOnboardingStep } = useOnboarding("helpdesk");
 
 const searchText = ref("");
 const highlightedIndex = ref(0);
@@ -594,6 +596,9 @@ async function saveAssignees(added: string[], removed: string[]) {
     if (added.length) logParts.push(`assigned ${added.join(", ")}`);
     if (removed.length) logParts.push(`unassigned ${removed.join(", ")}`);
     await logActivity(logParts.join(" & "));
+    if (ticket && added.length) {
+      updateOnboardingStep("assign_to_agent");
+    }
 
     // Delay the success toast when warnings were shown so they land first.
     const successDelay = hasUnavailable ? 1000 : 0;
