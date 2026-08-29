@@ -13,6 +13,7 @@ import { __ } from "@/translation";
 type EmailAccountFormState = {
   email_account_name?: string;
   email_id?: string;
+  login_id?: string;
   service?: string;
   password?: string;
   api_key?: string;
@@ -123,6 +124,11 @@ export const customProviderTopFields = [
     name: "password",
     type: "password",
     placeholder: "********",
+  },
+  {
+    label: __("IMAP/SMTP login (optional)"),
+    name: "login_id",
+    type: "text",
   },
   {
     label: __("Email Domain"),

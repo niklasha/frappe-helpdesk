@@ -90,7 +90,11 @@
                     :label="field.label"
                     :name="field.name"
                     :type="field.type"
-                    :placeholder="field.placeholder"
+                    :placeholder="
+                      field.name === 'login_id'
+                        ? state.email_id
+                        : field.placeholder
+                    "
                   />
                 </div>
               </div>
@@ -185,6 +189,7 @@ interface EmailAccountBaseState {
   email_account_name: string;
   service: string;
   email_id: string;
+  login_id: string;
   enable_incoming: boolean;
   enable_outgoing: boolean;
   default_outgoing: boolean;
@@ -233,6 +238,7 @@ const state = reactive<EmailAccountProviderAuthState>({
   email_account_name: props.accountData.email_account_name || "",
   service: props.accountData.service || "",
   email_id: props.accountData.email_id || "",
+  login_id: props.accountData.login_id || "",
   api_key: props.accountData?.api_key || null,
   api_secret: props.accountData?.api_secret || null,
   password: props.accountData?.password || null,
@@ -387,9 +393,12 @@ function buildUpdatePayload() {
   }
 
   if (isCustomProvider.value) {
+    const loginId = state.login_id.trim();
     return {
       ...commonPayload,
       password: state.password,
+      login_id_is_different: Boolean(loginId),
+      login_id: loginId || null,
       ...customState,
     };
   }
@@ -438,6 +447,7 @@ const isDirty = computed(() => {
     customDirty ||
     state.service !== props.accountData.service ||
     state.email_id !== props.accountData.email_id ||
+    state.login_id !== (props.accountData.login_id || "") ||
     state.api_key !== props.accountData.api_key ||
     state.api_secret !== props.accountData.api_secret ||
     state.password !== props.accountData.password ||

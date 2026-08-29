@@ -326,6 +326,7 @@ export type EmailStep = "email-list" | "email-add" | "email-edit";
 export interface EmailAccount {
   email_account_name: string;
   email_id: string;
+  login_id?: string;
   service: string;
   api_key?: string;
   api_secret?: string;
