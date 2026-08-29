@@ -101,7 +101,7 @@ const currentInputIsValidEmail = ref(false);
 
 // Stores and utilities
 const { updateOnboardingStep } = useOnboarding("helpdesk");
-const { isManager, isAdmin } = useAuthStore();
+const { isManager } = useAuthStore();
 
 // Methods
 const testEmailRegex = (val) => {
@@ -179,7 +179,7 @@ const sentInvitesResource = createResource({
     searchInput.value = "";
     inviteQueue.value = [];
 
-    if (isManager || isAdmin) {
+    if (isManager) {
       updateOnboardingStep("invite_agents");
     }
 
