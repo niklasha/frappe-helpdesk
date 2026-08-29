@@ -6769,3 +6769,7 @@ msgstr "{0} · Senast aktiv {1}"
 msgid "{} people reacted to your comment"
 msgstr "{} personer reagerade på din kommentar"
 
+
+#: desk/src/components/Settings/emailConfig.ts:129
+msgid "IMAP/SMTP login (optional)"
+msgstr "IMAP/SMTP-inloggning (valfritt)"
