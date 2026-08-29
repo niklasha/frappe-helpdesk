@@ -7634,3 +7634,7 @@ msgstr ""
 msgid "{} people reacted to your comment"
 msgstr ""
 
+
+#: desk/src/components/Settings/emailConfig.ts:129
+msgid "IMAP/SMTP login (optional)"
+msgstr ""
