@@ -180,6 +180,7 @@ class HDTicket(Document):
         self.capture_ticket_created_telemetry_events()
         publish_event("helpdesk:new-ticket")
         self.tag_first_ticket()
+        self.auto_tag_from_subject()
         self.assign_suitable_agent()
 
         if self.get("description"):
@@ -229,6 +230,11 @@ class HDTicket(Document):
             return
 
         self.add_tag(FIRST_TICKET_TAG, FIRST_TICKET_TAG_COLOR)
+
+    def auto_tag_from_subject(self):
+        """Apply the configured semantic tag for recognized order subjects."""
+        if "order" in (self.subject or "").lower():
+            self.add_tag("order")
 
     def assign_suitable_agent(self):
         """Assign a new ticket to the first active agent when one is available."""
