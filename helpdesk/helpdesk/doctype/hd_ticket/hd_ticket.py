@@ -77,6 +77,7 @@ class HDTicket(Document):
         self.set_classification_model()
         self.set_production_option()
         self.set_workflow_identifier()
+        self.set_shipping_method()
         self.set_ticket_type()
         self.set_raised_by()
         self.set_priority()
@@ -332,6 +333,18 @@ class HDTicket(Document):
             (label for keywords, label in workflows if any(k in subject for k in keywords)),
             "",
         )
+
+    def set_shipping_method(self):
+        """Identify a shipping method when it is stated in the subject."""
+        if self.shipping_method and not self.is_new():
+            return
+        subject = (self.subject or "").lower()
+        if "expressfrakt" in subject or "express freight" in subject:
+            self.shipping_method = "Expressfrakt"
+        elif "express" in subject:
+            self.shipping_method = "Expressfrakt"
+        else:
+            self.shipping_method = ""
 
     def set_raised_by(self):
         if self.raised_by:

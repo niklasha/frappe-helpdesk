@@ -20,6 +20,7 @@
   "classification_model",
   "production_option",
   "workflow_identifier",
+  "shipping_method",
   "agent_group",
   "summary",
   "sb_details",
@@ -151,6 +152,13 @@
    "fieldtype": "Select",
    "label": "Workflow Identifier",
    "options": "Create order\nAwaiting information\nAwaiting shipping\nIndia\nVectorizer\nExisting original",
+   "read_only": 1
+  },
+  {
+   "fieldname": "shipping_method",
+   "fieldtype": "Select",
+   "label": "Shipping Method",
+   "options": "Expressfrakt",
    "read_only": 1
   },
   {
