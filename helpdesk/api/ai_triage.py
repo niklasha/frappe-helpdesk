@@ -9,30 +9,30 @@ from helpdesk.utils import agent_only
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def record_triage(
-    ticket_id,
-    classification=None,
-    priority=None,
-    suggested_agent=None,
-    confidence=0,
-    confidence_threshold=0,
-    rationale=None,
-    action="propose",
-    provider=None,
-    model_version=None,
-    prompt_version=None,
-    idempotency_key=None,
-    missing_information=None,
-    attachment_assessment=None,
-    repeat_order=0,
-    complaint=0,
-    summary=None,
-    source_message=None,
-    repeat_order_evidence=None,
-    complaint_evidence=None,
-    action_thresholds=None,
-    failed_action=None,
-    ticket_completed=0,
-):
+    ticket_id: str,
+    classification: str | None = None,
+    priority: str | None = None,
+    suggested_agent: str | None = None,
+    confidence: float | int | None = 0,
+    confidence_threshold: float | int | None = 0,
+    rationale: str | None = None,
+    action: str = "propose",
+    provider: str | None = None,
+    model_version: str | None = None,
+    prompt_version: str | None = None,
+    idempotency_key: str | None = None,
+    missing_information: str | None = None,
+    attachment_assessment: str | None = None,
+    repeat_order: int | bool | None = 0,
+    complaint: int | bool | None = 0,
+    summary: str | None = None,
+    source_message: str | None = None,
+    repeat_order_evidence: str | None = None,
+    complaint_evidence: str | None = None,
+    action_thresholds: dict | list | str | None = None,
+    failed_action: str | None = None,
+    ticket_completed: int | bool | None = 0,
+) -> dict:
     """Persist a reviewable triage proposal, safely replayable by key."""
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     if idempotency_key:
@@ -75,7 +75,9 @@ def record_triage(
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def correct_triage(triage_id, classification, reason=None):
+def correct_triage(
+    triage_id: str, classification: str, reason: str | None = None
+) -> dict:
     """Record a human correction without erasing the original proposal."""
     doc = frappe.get_doc("HD AI Triage Result", triage_id)
     doc.corrected_classification = classification
