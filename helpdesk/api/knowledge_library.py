@@ -7,7 +7,7 @@ from helpdesk.utils import agent_only, is_admin
 
 @frappe.whitelist()
 @agent_only
-def search_knowledge(query, limit=5):
+def search_knowledge(query, limit=5, category=None):
     """Return knowledge-library articles matching the query.
 
     The AI reply layer retrieves candidate source material through this
@@ -16,9 +16,12 @@ def search_knowledge(query, limit=5):
     if not query:
         return []
     like = f"%{query}%"
+    filters = {"ai_approved": 1}
+    if category:
+        filters["category"] = category
     return frappe.get_all(
         "HD Article",
-        filters={"ai_approved": 1},
+        filters=filters,
         or_filters={"title": ["like", like], "content": ["like", like]},
         fields=["name", "title", "content", "category", "version", "ai_approved_version"],
         order_by="modified desc",

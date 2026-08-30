@@ -78,12 +78,13 @@ def draft_knowledge_reply(
     ticket_id,
     question,
     question_type=None,
+    category=None,
     language=None,
     idempotency_key=None,
     limit=3,
 ):
     """Draft a reply grounded in the approved knowledge library."""
-    articles = search_knowledge(question, limit=limit)
+    articles = search_knowledge(question, limit=limit, category=category)
     sources = [
         {
             "article": article.name,
@@ -160,3 +161,16 @@ def send_reply_draft(draft_id):
     doc.sent_on = now_datetime()
     doc.save(ignore_permissions=True)
     return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def answer_common_question(ticket_id, question, category=None, idempotency_key=None):
+    """Answer a recurring question such as delivery times or product facts."""
+    return draft_knowledge_reply(
+        ticket_id=ticket_id,
+        question=question,
+        question_type="common_question",
+        category=category,
+        idempotency_key=idempotency_key,
+    )
