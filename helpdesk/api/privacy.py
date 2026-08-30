@@ -16,7 +16,7 @@ def require_privacy_admin():
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def set_retention_policy(reference_doctype, retain_days):
+def set_retention_policy(reference_doctype: str, retain_days: int) -> dict:
     """Configure for how many days documents of one doctype are kept."""
     require_privacy_admin()
     existing = frappe.db.exists("HD Retention Policy", reference_doctype)
@@ -38,7 +38,7 @@ def set_retention_policy(reference_doctype, retain_days):
 
 @frappe.whitelist()
 @agent_only
-def retention_policies():
+def retention_policies() -> list:
     """Return the retention periods currently in force."""
     return frappe.get_all(
         "HD Retention Policy",
@@ -50,7 +50,7 @@ def retention_policies():
 
 @frappe.whitelist()
 @agent_only
-def expired_documents(reference_doctype):
+def expired_documents(reference_doctype: str) -> list:
     """Report the documents that have outlived their retention period.
 
     Reporting only: Helpdesk names what has expired and deletes nothing, so
@@ -76,7 +76,7 @@ def expired_documents(reference_doctype):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def anonymize_contact(email):
+def anonymize_contact(email: str) -> int:
     """Replace a contact's address on their tickets with an irreversible placeholder.
 
     The placeholder carries a random hash, so the original address cannot be
@@ -102,7 +102,7 @@ DECLARATION_FIELDS = ("purpose", "data_categories", "agreement_reference", "host
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def declare_ai_processing(provider, **values):
+def declare_ai_processing(provider: str, **values) -> dict:
     """Record how an external AI provider processes personal data for us."""
     existing = frappe.db.exists("HD AI Processing Declaration", provider)
     doc = (
@@ -124,7 +124,7 @@ def declare_ai_processing(provider, **values):
 
 @frappe.whitelist()
 @agent_only
-def ai_processing_declarations():
+def ai_processing_declarations() -> list:
     """Return every declared external AI processing arrangement."""
     return frappe.get_all(
         "HD AI Processing Declaration",
@@ -144,7 +144,7 @@ def has_ai_training_consent(customer):
 
 @frappe.whitelist()
 @agent_only
-def ai_training_allowed(customer):
+def ai_training_allowed(customer: str) -> bool:
     """Report the consent decision as a boolean.
 
     Silence must never be read as permission, so the answer is a real boolean:
@@ -156,7 +156,7 @@ def ai_training_allowed(customer):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def set_ai_training_consent(customer, consent):
+def set_ai_training_consent(customer: str, consent: int | bool) -> dict:
     """Record a customer's decision about training use, and log who took it."""
     frappe.has_permission("HD Customer", "write", doc=customer, throw=True)
     doc = frappe.get_doc("HD Customer", customer)
