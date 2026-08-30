@@ -1,4 +1,5 @@
 import frappe
+from frappe import _
 
 from helpdesk.utils import agent_only
 
@@ -11,6 +12,16 @@ CALL_VALUE_FIELDS = (
     "recording_url",
     "transcript",
 )
+
+
+def _get_call(external_call_id):
+    """Load the call recorded under this external id, refusing an unknown call."""
+    name = frappe.db.get_value(
+        "HD Call Record", {"external_call_id": external_call_id}, "name"
+    )
+    if not name:
+        frappe.throw(_("No call is recorded for {0}.").format(external_call_id))
+    return frappe.get_doc("HD Call Record", name)
 
 
 @frappe.whitelist()
@@ -47,4 +58,14 @@ def record_call(external_call_id, direction="Inbound", **values):
         }
     )
     doc.insert(ignore_permissions=True)
+    return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def record_call_transcript(external_call_id, transcript):
+    """Store the transcription a telephony system produced for a recorded call."""
+    doc = _get_call(external_call_id)
+    doc.transcript = transcript
+    doc.save(ignore_permissions=True)
     return doc.as_dict()
