@@ -7,6 +7,9 @@ from frappe.utils import cint, now_datetime
 from helpdesk.integrations.order import get_order_connector
 from helpdesk.utils import agent_only
 
+MANUAL_HANDLING_AFTER = 3
+QUEUED_STATUSES = ("Failed", "Needs Manual Handling")
+
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
@@ -82,13 +85,14 @@ def apply_submission_result(submission_id, external_order_id=None, error=None):
     """Record what the external system answered for one submission.
 
     A created order is linked back to its ticket so the agent can reach it;
-    a refusal is kept with its error so the attempt can be repeated.
+    a refusal is kept with its error so the attempt can be repeated, and once
+    the external system has refused it three times a person has to take over.
     """
     doc = frappe.get_doc("HD External Order Submission", submission_id)
     if error:
         doc.attempts = cint(doc.attempts) + 1
         doc.last_error = error
-        doc.status = "Failed"
+        doc.status = "Failed" if doc.attempts < MANUAL_HANDLING_AFTER else "Needs Manual Handling"
     else:
         doc.status = "Submitted"
         doc.external_order_id = external_order_id
@@ -142,6 +146,28 @@ def _external_order_id(result):
     return result
 
 
+def _send_to_connector(submission):
+    """Offer one recorded submission to the configured connector.
+
+    Without a connector, or without an extraction to send, the submission is
+    handed back untouched and stays ``Pending``. A connector that raises is a
+    refused order like any other: the reason is recorded on the submission and
+    it joins the queue instead of escaping to the caller.
+    """
+    connector = get_order_connector()
+    if not connector or not submission.get("extraction"):
+        return submission
+    extraction = frappe.get_doc("HD Order Extraction", submission["extraction"])
+    try:
+        external_order_id = _external_order_id(connector(extraction.as_dict()))
+    except Exception as exc:
+        return apply_submission_result(submission_id=submission["name"], error=str(exc))
+    return apply_submission_result(
+        submission_id=submission["name"],
+        external_order_id=external_order_id,
+    )
+
+
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def submit_order(extraction_id, idempotency_key=None, automated=0):
@@ -166,14 +192,59 @@ def submit_order(extraction_id, idempotency_key=None, automated=0):
         idempotency_key=idempotency_key,
         automated=automated,
     )
-    connector = get_order_connector()
-    if not connector:
-        return submission
-    try:
-        external_order_id = _external_order_id(connector(extraction.as_dict()))
-    except Exception as exc:
-        return apply_submission_result(submission_id=submission["name"], error=str(exc))
-    return apply_submission_result(
-        submission_id=submission["name"],
-        external_order_id=external_order_id,
+    return _send_to_connector(submission)
+
+
+@frappe.whitelist()
+@agent_only
+def failed_submissions():
+    """List the submissions the external system did not accept.
+
+    These are the orders an agent has to finish by hand, either by retrying
+    them or by creating the order in the external system directly.
+    """
+    return frappe.get_all(
+        "HD External Order Submission",
+        filters={"status": ("in", QUEUED_STATUSES)},
+        fields=[
+            "name",
+            "ticket",
+            "extraction",
+            "status",
+            "attempts",
+            "last_error",
+            "automated",
+            "submitted_on",
+        ],
+        order_by="modified desc",
     )
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def retry_submission(submission_id):
+    """Offer a refused submission to the external system once more.
+
+    Only an agent who may read the ticket may retry its order. The previous
+    error is cleared once there really is something to attempt, so the queue
+    shows only what is still outstanding; when nothing can be attempted the
+    submission stays queued and says why. The attempt count is kept, so
+    repeated failures still end up needing manual handling.
+    """
+    doc = frappe.get_doc("HD External Order Submission", submission_id)
+    frappe.has_permission("HD Ticket", "read", doc=doc.ticket, throw=True)
+    if doc.status not in QUEUED_STATUSES:
+        frappe.throw(_("Submission {0} is not waiting to be retried.").format(submission_id))
+    reason = None
+    if not get_order_connector():
+        reason = _("No external system is configured to retry this order.")
+    elif not doc.extraction:
+        reason = _("This submission has no order extraction left to send.")
+    if reason:
+        doc.last_error = reason
+        doc.save(ignore_permissions=True)
+        return doc.as_dict()
+    doc.last_error = None
+    doc.status = "Pending"
+    doc.save(ignore_permissions=True)
+    return _send_to_connector(doc.as_dict())
