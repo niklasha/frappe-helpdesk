@@ -134,6 +134,8 @@ ignore_links_on_delete = [
     "HD External Order Submission",
     "HD Ticket External Link",
     "HD Customer External Record",
+    "HD Call Record",
+    "HD Chat Conversation",
 ]
 
 # setup wizard

@@ -1,0 +1,30 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-30 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["external_conversation_id", "visitor", "visitor_email", "started_on", "transcript", "ticket"],
+ "fields": [
+  {"fieldname": "external_conversation_id", "fieldtype": "Data", "in_list_view": 1, "label": "External Conversation ID", "reqd": 1, "unique": 1},
+  {"fieldname": "visitor", "fieldtype": "Data", "in_list_view": 1, "label": "Visitor"},
+  {"fieldname": "visitor_email", "fieldtype": "Data", "in_list_view": 1, "label": "Visitor Email"},
+  {"fieldname": "started_on", "fieldtype": "Datetime", "label": "Started On"},
+  {"fieldname": "transcript", "fieldtype": "Long Text", "label": "Transcript"},
+  {"fieldname": "ticket", "fieldtype": "Link", "label": "Ticket", "options": "HD Ticket"}
+ ],
+ "links": [],
+ "modified": "2026-08-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Helpdesk",
+ "name": "HD Chat Conversation",
+ "owner": "Administrator",
+ "permissions": [
+  {"create": 1, "delete": 1, "read": 1, "role": "System Manager", "write": 1},
+  {"create": 1, "read": 1, "role": "Agent", "write": 1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
