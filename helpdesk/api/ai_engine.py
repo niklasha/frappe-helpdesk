@@ -6,6 +6,8 @@ Helpdesk can own honestly — describing the engines, and emitting the documents
 a raphain-embedding runner consumes. No inference happens here.
 """
 
+import json
+
 import frappe
 from frappe import _
 from frappe.utils import cint
@@ -22,6 +24,13 @@ def _require_admin() -> None:
             _("Only an administrator may configure AI engines."),
             frappe.PermissionError,
         )
+
+
+def _as_document_text(value: dict | list | str) -> str:
+    """A JSON docfield holds text, whether the caller sent data or JSON already."""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
 
 
 @frappe.whitelist()
@@ -43,6 +52,15 @@ def upsert_engine(
     kind: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    auth_type: str | None = None,
+    auth_env: str | None = None,
+    auth_secret: str | None = None,
+    auth_header: str | None = None,
+    auth_access_token_env: str | None = None,
+    auth_access_token: str | None = None,
+    auth_refresh_token_env: str | None = None,
+    auth_expires_at_unix: int | None = None,
+    auth_refresh: dict | list | str | None = None,
     enabled: int | bool | None = None,
 ) -> dict:
     """Create or update one AI engine, and return it as configured."""
@@ -58,6 +76,24 @@ def upsert_engine(
         doc.model = model
     if base_url is not None:
         doc.base_url = base_url
+    if auth_type is not None:
+        doc.auth_type = auth_type
+    if auth_env is not None:
+        doc.auth_env = auth_env
+    if auth_secret is not None:
+        doc.auth_secret = auth_secret
+    if auth_header is not None:
+        doc.auth_header = auth_header
+    if auth_access_token_env is not None:
+        doc.auth_access_token_env = auth_access_token_env
+    if auth_access_token is not None:
+        doc.auth_access_token = auth_access_token
+    if auth_refresh_token_env is not None:
+        doc.auth_refresh_token_env = auth_refresh_token_env
+    if auth_expires_at_unix is not None:
+        doc.auth_expires_at_unix = cint(auth_expires_at_unix)
+    if auth_refresh is not None:
+        doc.auth_refresh = _as_document_text(auth_refresh)
     if enabled is not None:
         doc.enabled = cint(enabled)
     doc.save(ignore_permissions=True)
