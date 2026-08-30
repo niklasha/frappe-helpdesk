@@ -1,0 +1,9 @@
+{
+ "actions": [], "creation": "2026-08-30 00:00:00.000000", "doctype": "DocType", "engine": "InnoDB", "issingle": 1,
+ "field_order": ["enabled", "runner_url", "request_timeout"],
+ "fields": [
+  {"default":"0","fieldname":"enabled","fieldtype":"Check","label":"Enabled"}, {"fieldname":"runner_url","fieldtype":"Data","label":"Runner URL"}, {"default":"30","fieldname":"request_timeout","fieldtype":"Int","label":"Request Timeout"}
+ ],
+ "links": [], "modified": "2026-08-30 00:00:00.000000", "modified_by": "Administrator", "module": "Helpdesk", "name": "HD AI Runner Settings", "owner": "Administrator",
+ "permissions": [{"create":1,"delete":1,"read":1,"role":"System Manager","write":1},{"read":1,"role":"Agent"}], "sort_field":"modified", "sort_order":"DESC", "states":[], "track_changes":1
+}
