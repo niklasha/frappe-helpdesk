@@ -138,6 +138,7 @@ ignore_links_on_delete = [
     "HD Chat Conversation",
     "HD Automation Event",
     "HD AI Engine",
+    "HD AI MCP Server",
 ]
 
 # setup wizard
