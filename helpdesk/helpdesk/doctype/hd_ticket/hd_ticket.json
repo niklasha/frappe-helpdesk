@@ -181,8 +181,7 @@
   {
    "fieldname": "message_id",
    "fieldtype": "Data",
-   "label": "Message ID",
-   "read_only": 1
+   "label": "Message ID"
   },
   {
    "fieldname": "new_order_from_old_thread",
