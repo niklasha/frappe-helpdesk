@@ -365,6 +365,7 @@ class HDTicket(Document):
     def set_priority(self):
         if self.priority:
             return
+        subject = (self.subject or "").lower()
         self.priority = frappe.get_cached_value(
             "HD Ticket Type", self.ticket_type, "priority"
         ) or frappe.get_cached_value("HD Settings", "HD Settings", "default_priority")
