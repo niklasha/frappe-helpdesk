@@ -44,6 +44,19 @@ def log_automation_event(
     return doc.as_dict()
 
 
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def log_ai_event(action, reference_doctype=None, reference_name=None, details=None):
+    """Record an action an AI took, attributed to the AI rather than the user."""
+    return log_automation_event(
+        action,
+        actor="AI",
+        reference_doctype=reference_doctype,
+        reference_name=reference_name,
+        details=details,
+    )
+
+
 @frappe.whitelist()
 @agent_only
 def automation_events(reference_doctype=None, reference_name=None, limit=20):
