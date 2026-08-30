@@ -10,6 +10,7 @@
   "image",
   "customer_name",
   "customer_type",
+  "account_manager",
   "domain",
   "erpnext_customer",
   "country",
@@ -40,6 +41,13 @@
    "fieldtype": "Select",
    "label": "Customer Type",
    "options": "Company\nIndividual\nPartnership"
+  },
+  {
+   "fieldname": "account_manager",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Account Manager",
+   "options": "User"
   },
   {
    "fieldname": "domain",
