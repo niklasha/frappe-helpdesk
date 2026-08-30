@@ -1,5 +1,5 @@
 import frappe
-from frappe.utils import flt
+from frappe.utils import flt, now
 
 from helpdesk.utils import agent_only
 
@@ -53,3 +53,15 @@ def reply_approval_metrics():
     metrics["total"] = total
     metrics["approval_rate"] = flt(accepted / total, 4) if total else 0
     return metrics
+
+
+@frappe.whitelist()
+@agent_only
+def export_metrics():
+    """Hand an external analytics tool every helpdesk metric in one snapshot."""
+    return {
+        "automation": automation_metrics(),
+        "classification": classification_accuracy(),
+        "replies": reply_approval_metrics(),
+        "generated_on": now(),
+    }
