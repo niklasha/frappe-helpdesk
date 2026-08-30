@@ -3,6 +3,8 @@ from frappe import _
 
 from helpdesk.utils import agent_only, get_customers
 
+CHAT_SYSTEM = "chat"
+
 CALL_VALUE_FIELDS = (
     "provider",
     "from_number",
@@ -45,6 +47,25 @@ def telephony_settings():
         fields=["name", "system", "label", "link_template"],
         order_by="system asc",
     )
+
+
+@frappe.whitelist()
+@agent_only
+def chat_widget_settings():
+    """Return the website chat widget configuration held by the chat external system."""
+    row = frappe.db.get_value(
+        "HD External System",
+        {"system": CHAT_SYSTEM, "enabled": 1},
+        ["system", "label"],
+        as_dict=True,
+    )
+    if not row:
+        return {"enabled": 0, "greeting": None, "system": CHAT_SYSTEM}
+    return {
+        "enabled": 1,
+        "greeting": row.label or row.system,
+        "system": row.system,
+    }
 
 
 @frappe.whitelist(methods=["POST"])
