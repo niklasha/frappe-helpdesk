@@ -61,6 +61,10 @@ def upsert_engine(
     auth_refresh_token_env: str | None = None,
     auth_expires_at_unix: int | None = None,
     auth_refresh: dict | list | str | None = None,
+    parameters: dict | list | str | None = None,
+    headers: dict | list | str | None = None,
+    options: dict | list | str | None = None,
+    pricing: dict | list | str | None = None,
     enabled: int | bool | None = None,
 ) -> dict:
     """Create or update one AI engine, and return it as configured."""
@@ -94,6 +98,14 @@ def upsert_engine(
         doc.auth_expires_at_unix = cint(auth_expires_at_unix)
     if auth_refresh is not None:
         doc.auth_refresh = _as_document_text(auth_refresh)
+    if parameters is not None:
+        doc.parameters = _as_document_text(parameters)
+    if headers is not None:
+        doc.headers = _as_document_text(headers)
+    if options is not None:
+        doc.options = _as_document_text(options)
+    if pricing is not None:
+        doc.pricing = _as_document_text(pricing)
     if enabled is not None:
         doc.enabled = cint(enabled)
     doc.save(ignore_permissions=True)

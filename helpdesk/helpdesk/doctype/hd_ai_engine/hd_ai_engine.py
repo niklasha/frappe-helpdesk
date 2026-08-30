@@ -26,6 +26,8 @@ OAUTH_FIELDS = (
     "auth_refresh",
 )
 
+OBJECT_FIELDS = ("parameters", "options", "pricing")
+
 
 class HDAIEngine(Document):
     """One raphain provider Helpdesk knows how to describe.
@@ -38,6 +40,7 @@ class HDAIEngine(Document):
         """An engine raphain cannot instantiate is not a usable engine."""
         self.validate_kind()
         self.validate_authentication()
+        self.validate_documents()
 
     def validate_kind(self):
         """raphain has a closed set of adapters; anything else is a typo."""
@@ -119,3 +122,34 @@ class HDAIEngine(Document):
                     " environment reference, or a refresh_token inside the refresh block."
                 )
             )
+
+    def parsed_document(self, fieldname):
+        """Return one JSON docfield as data, refusing text that is not JSON."""
+        value = self.get(fieldname)
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.loads(value)
+        except ValueError:
+            frappe.throw(_("{0} is not valid JSON.").format(fieldname))
+
+    def validate_documents(self):
+        """The JSON blocks must already hold the shape raphain reads them in."""
+        for fieldname in OBJECT_FIELDS:
+            document = self.parsed_document(fieldname)
+            if document is None:
+                continue
+            if not isinstance(document, dict):
+                frappe.throw(_("{0} must be a JSON object.").format(fieldname))
+            self.set(fieldname, json.dumps(document))
+        headers = self.parsed_document("headers")
+        if headers is None:
+            return
+        if not isinstance(headers, list) or not all(
+            isinstance(entry, dict) and entry.get("name") and entry.get("value")
+            for entry in headers
+        ):
+            frappe.throw(_("Headers must be a list of objects with a name and a value."))
+        self.set("headers", json.dumps(headers))
