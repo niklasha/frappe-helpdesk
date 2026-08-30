@@ -2,6 +2,7 @@ import re
 
 import frappe
 from frappe import _
+from frappe.utils import now_datetime
 
 from helpdesk.utils import agent_only
 
@@ -157,3 +158,29 @@ def translate_outbound(
         model_version=model_version,
         idempotency_key=idempotency_key,
     )
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def review_translation(translation_id, translated_text=None):
+    """Record an agent's review, and any correction, of a translation."""
+    doc = frappe.get_doc("HD Message Translation", translation_id)
+    if translated_text:
+        doc.translated_text = translated_text
+    doc.reviewed = 1
+    doc.reviewed_by = frappe.session.user
+    doc.reviewed_on = now_datetime()
+    doc.save(ignore_permissions=True)
+    return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def mark_translation_sent(translation_id):
+    """Send a translation; an outbound one must be reviewed by an agent first."""
+    doc = frappe.get_doc("HD Message Translation", translation_id)
+    if doc.direction == "Outbound" and not doc.reviewed:
+        frappe.throw(_("This translation must be reviewed before it is sent."))
+    doc.sent_on = now_datetime()
+    doc.save(ignore_permissions=True)
+    return doc.as_dict()
