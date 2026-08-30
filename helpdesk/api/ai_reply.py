@@ -63,6 +63,38 @@ def _reply_messages(instructions, knowledge, question):
     ]
 
 
+def _generated_reply(engine, knowledge, question):
+    """Return the reply the engine wrote, together with its provenance.
+
+    A failed generation is deliberately not caught: falling back to the raw
+    knowledge extract would let an engine that never answered masquerade as one
+    that did, so the failure surfaces before any draft exists.
+    """
+    instructions, prompt_version = _reply_instructions()
+    response = ai_runner.generate(
+        engine=engine, messages=_reply_messages(instructions, knowledge, question)
+    )
+    text = response.get("text")
+    if not text:
+        frappe.throw(_("The AI engine wrote no reply to draft from."))
+    return {
+        "body": text,
+        "provider": response.get("provider"),
+        "model_version": response.get("model"),
+        "prompt_version": prompt_version,
+    }
+
+
+def _extracted_reply(knowledge):
+    """Return the knowledge extract used where no engine writes the reply."""
+    return {
+        "body": knowledge,
+        "provider": None,
+        "model_version": None,
+        "prompt_version": None,
+    }
+
+
 def _apply_auto_reply_policy(doc):
     """Only question types an administrator released may skip human approval."""
     if not doc.question_type:
@@ -141,35 +173,27 @@ def draft_knowledge_reply(
     """Draft a reply grounded in the approved knowledge library."""
     articles = search_knowledge(question, limit=limit, category=category)
     sources, knowledge = _approved_knowledge(articles)
-    body = knowledge
-    provider = None
-    model_version = None
-    prompt_version = None
     engine = (
         ai_engine.default_engine()
         if sources and ai_runner.is_runner_available()
         else None
     )
-    if engine:
-        instructions, prompt_version = _reply_instructions()
-        response = ai_runner.generate(
-            engine=engine,
-            messages=_reply_messages(instructions, knowledge, question),
-        )
-        body = response.get("text")
-        provider = response.get("provider")
-        model_version = response.get("model")
+    reply = (
+        _generated_reply(engine, knowledge, question)
+        if engine
+        else _extracted_reply(knowledge)
+    )
     return record_reply_draft(
         ticket_id=ticket_id,
-        body=body,
+        body=reply["body"],
         question=question,
         question_type=question_type,
         language=language,
         sources=sources,
         confidence=1 if sources else 0,
-        provider=provider,
-        model_version=model_version,
-        prompt_version=prompt_version,
+        provider=reply["provider"],
+        model_version=reply["model_version"],
+        prompt_version=reply["prompt_version"],
         idempotency_key=idempotency_key,
     )
 
