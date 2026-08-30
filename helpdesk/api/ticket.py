@@ -1,5 +1,6 @@
 import frappe
 from frappe import _
+from frappe.utils import cint
 
 from helpdesk.utils import agent_only, is_admin
 
@@ -73,6 +74,28 @@ def assign_ticket_to_agent(ticket_id, agent_id=None):
 
     ticket_doc.assign_agent(agent_id)
     return ticket_doc
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def toggle_ticket_favorite(ticket_id: str, favorite: int | bool = 1):
+    """Add or remove the current user's favorite marker for a ticket."""
+    if not ticket_id:
+        frappe.throw(_("A ticket is required"))
+    ticket = frappe.get_doc("HD Ticket", ticket_id)
+    frappe.has_permission("HD Ticket", "read", doc=ticket, throw=True)
+    user = frappe.session.user
+    existing = frappe.db.get_value(
+        "HD Ticket Favorite", {"ticket": ticket.name, "user": user}, "name"
+    )
+    if cint(favorite):
+        if not existing:
+            frappe.get_doc(
+                {"doctype": "HD Ticket Favorite", "ticket": ticket.name, "user": user}
+            ).insert(ignore_permissions=True)
+    elif existing:
+        frappe.delete_doc("HD Ticket Favorite", existing, ignore_permissions=True)
+    return {"favorite": bool(cint(favorite))}
 
 
 @frappe.whitelist()
