@@ -3,7 +3,24 @@ import json
 import frappe
 from frappe.utils import now_datetime
 
+from helpdesk.api import ai_generation
 from helpdesk.utils import agent_only
+
+EXTRACTION_SCHEMA = (
+    "Use these keys and no others: product, quantity (a number), size, colors, "
+    "production_option, delivery_information, original_files. Do not say "
+    "whether the order is complete or ready; that is not yours to judge."
+)
+
+EXTRACTION_FIELDS = (
+    "product",
+    "quantity",
+    "size",
+    "colors",
+    "production_option",
+    "delivery_information",
+    "original_files",
+)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -29,6 +46,40 @@ def record_extraction(
     doc = frappe.get_doc({"doctype": "HD Order Extraction", "ticket": ticket_id, "idempotency_key": idempotency_key, "required_fields": json.dumps(required), "missing_fields": json.dumps(missing), "complete": complete, "status": "Ready to create order" if complete else "Needs Review", "ready_for_connector": complete, "corrections": {}, "corrected_on": None, **values})
     doc.insert(ignore_permissions=True)
     return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def extract_order(ticket_id: str, idempotency_key: str | None = None) -> dict:
+    """Read one ticket's order details with the AI engine, and record them.
+
+    Only the details the customer stated are taken from the answer. Whether
+    they add up to an order stays a helpdesk decision: `record_extraction`
+    derives completeness from the required fields, so an engine that declares
+    an order ready cannot make it so.
+
+    A key that already produced an extraction returns it unchanged, without
+    asking the engine a question it has answered once already.
+    """
+    frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+    stored = ai_generation.replayed("HD Order Extraction", idempotency_key)
+    if stored:
+        return frappe.get_doc("HD Order Extraction", stored).as_dict()
+    engine = ai_generation.engine_or_throw()
+    instructions, _prompt_version = ai_generation._prompt(
+        ai_generation.ORDER_EXTRACTION
+    )
+    answer, _response = ai_generation.generate_json(
+        engine,
+        instructions,
+        ai_generation.ticket_text(ticket_id),
+        EXTRACTION_SCHEMA,
+        EXTRACTION_FIELDS,
+    )
+    details = {field: answer[field] for field in EXTRACTION_FIELDS if field in answer}
+    return record_extraction(
+        ticket_id=ticket_id, idempotency_key=idempotency_key, **details
+    )
 
 
 @frappe.whitelist(methods=["POST"])
