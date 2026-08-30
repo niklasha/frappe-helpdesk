@@ -33,6 +33,8 @@ import SettingsGear from "~icons/lucide/settings";
 import ZapIcon from "~icons/lucide/zap";
 import ProfilePage from "./Profile/ProfilePage.vue";
 import Preferences from "./Preferences/Preferences.vue";
+import AIEngines from "./AI/AIEngines.vue";
+import SparklesIcon from "~icons/lucide/sparkles";
 
 export const showSettingsModal = ref(false);
 
@@ -136,6 +138,17 @@ export const tabs = computed(() => {
       ],
     },
     {
+      label: __("AI"),
+      condition: () => auth.isAdmin,
+      items: [
+        {
+          label: __("AI Engines"),
+          icon: markRaw(SparklesIcon),
+          component: markRaw(AIEngines),
+        },
+      ],
+    },
+    {
       label: __("Integrations"),
       items: [
         {
@@ -186,7 +199,8 @@ type TabName =
   | "Field Dependencies"
   | "Telephony"
   | "ERPNext"
-  | "Saved Replies";
+  | "Saved Replies"
+  | "AI Engines";
 
 export const setActiveSettingsTab = (tabName: TabName) => {
   activeTab.value =
