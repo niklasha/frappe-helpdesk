@@ -229,11 +229,31 @@ class HDTicket(Document):
         """Assign a new ticket to the first active agent when one is available."""
         if self.get("_assign"):
             return
-        agent = frappe.db.get_value(
-            "HD Agent", {"is_active": 1}, "user", order_by="modified asc"
-        )
-        if agent:
-            assign({"assign_to": [agent], "doctype": "HD Ticket", "name": self.name})
+        account_manager = self.get_customer_account_manager()
+        if account_manager and self.is_assignable_agent(account_manager):
+            assign({"assign_to": [account_manager], "doctype": "HD Ticket", "name": self.name})
+            return
+        for agent in frappe.db.get_all("HD Agent", filters={"is_active": 1}, fields=["user"], order_by="modified asc"):
+            if self.is_assignable_agent(agent.user):
+                assign({"assign_to": [agent.user], "doctype": "HD Ticket", "name": self.name})
+                return
+
+    def get_customer_account_manager(self):
+        """Return the manager configured on this ticket's customer, if any."""
+        if not self.customer:
+            return None
+        return frappe.db.get_value("HD Customer", self.customer, "account_manager")
+
+    def is_assignable_agent(self, user):
+        """Only active agents with an enabled availability status may receive work."""
+        agent = frappe.db.get_value("HD Agent", {"user": user}, ["is_active", "availability"], as_dict=True)
+        if not agent:
+            return bool(frappe.db.exists("User", user))
+        if not agent.is_active:
+            return False
+        if not agent.availability:
+            return True
+        return bool(frappe.db.get_value("HD Agent Status", {"name": agent.availability, "enable": 1}))
 
     def on_update(self):
         # flake8: noqa
