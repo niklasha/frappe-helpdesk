@@ -12,6 +12,7 @@
   "customer_type",
   "account_manager",
   "key_account_agent",
+  "language",
   "domain",
   "erpnext_customer",
   "country",
@@ -56,6 +57,12 @@
    "in_list_view": 1,
    "label": "Key Account Agent",
    "options": "User"
+  },
+  {
+   "fieldname": "language",
+   "fieldtype": "Link",
+   "label": "Language",
+   "options": "HD Supported Language"
   },
   {
    "fieldname": "domain",
