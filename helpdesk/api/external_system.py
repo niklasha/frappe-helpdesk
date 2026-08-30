@@ -1,6 +1,7 @@
 import json
 
 import frappe
+from frappe.utils import now_datetime
 
 from helpdesk.utils import agent_only
 
@@ -79,3 +80,57 @@ def sync_customer(customer, external_id=None, values=None):
             setattr(doc, field, value)
     doc.save(ignore_permissions=True)
     return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def record_customer_history(
+    customer,
+    record_type,
+    external_id,
+    summary=None,
+    occurred_on=None,
+    idempotency_key=None,
+):
+    """Record an order or proof a customer already has in an external system."""
+    if idempotency_key:
+        name = frappe.db.get_value(
+            "HD Customer External Record", {"idempotency_key": idempotency_key}, "name"
+        )
+        if name:
+            return frappe.get_doc("HD Customer External Record", name).as_dict()
+    doc = frappe.get_doc(
+        {
+            "doctype": "HD Customer External Record",
+            "customer": customer,
+            "record_type": record_type,
+            "external_id": external_id,
+            "summary": summary,
+            "occurred_on": occurred_on or now_datetime(),
+            "idempotency_key": idempotency_key,
+        }
+    )
+    doc.insert(ignore_permissions=True)
+    return doc.as_dict()
+
+
+@frappe.whitelist()
+@agent_only
+def customer_history(customer, record_type=None):
+    """Return what a customer has ordered or approved before, newest first."""
+    filters = {"customer": customer}
+    if record_type:
+        filters["record_type"] = record_type
+    return frappe.get_all(
+        "HD Customer External Record",
+        filters=filters,
+        fields=[
+            "name",
+            "customer",
+            "record_type",
+            "external_id",
+            "summary",
+            "occurred_on",
+        ],
+        order_by="occurred_on desc, creation desc",
+    )

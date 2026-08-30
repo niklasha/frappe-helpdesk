@@ -1,0 +1,9 @@
+{
+ "actions": [], "autoname": "hash", "creation": "2026-08-30 00:00:00.000000", "doctype": "DocType", "engine": "InnoDB",
+ "field_order": ["customer", "record_type", "external_id", "summary", "occurred_on", "idempotency_key"],
+ "fields": [
+  {"fieldname":"customer","fieldtype":"Link","in_list_view":1,"label":"Customer","options":"HD Customer","reqd":1}, {"fieldname":"record_type","fieldtype":"Select","in_list_view":1,"label":"Record Type","options":"Order\nProof"}, {"fieldname":"external_id","fieldtype":"Data","in_list_view":1,"label":"External ID","reqd":1}, {"fieldname":"summary","fieldtype":"Small Text","label":"Summary"}, {"fieldname":"occurred_on","fieldtype":"Datetime","label":"Occurred On"}, {"fieldname":"idempotency_key","fieldtype":"Data","label":"Idempotency Key","unique":1}
+ ],
+ "links": [], "modified": "2026-08-30 00:00:00.000000", "modified_by": "Administrator", "module": "Helpdesk", "name": "HD Customer External Record", "owner": "Administrator",
+ "permissions": [{"create":1,"delete":1,"read":1,"role":"System Manager","write":1},{"create":1,"read":1,"role":"Agent","write":1}], "sort_field":"modified", "sort_order":"DESC", "states":[], "track_changes":1
+}
