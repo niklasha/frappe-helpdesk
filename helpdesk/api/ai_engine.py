@@ -11,6 +11,7 @@ import json
 import frappe
 from frappe import _
 from frappe.utils import cint
+from frappe.utils.password import get_decrypted_password
 
 from helpdesk.utils import agent_only, is_admin
 
@@ -153,7 +154,14 @@ def _stored_document(value):
     return value
 
 
-def _oauth_block(engine) -> dict:
+def _stored_secret(engine, fieldname):
+    """Read one encrypted docfield back, or None when the engine has none."""
+    return get_decrypted_password(
+        "HD AI Engine", engine.engine_name, fieldname, raise_exception=False
+    )
+
+
+def _oauth_block(engine, include_secrets=False) -> dict:
     """Describe an OAuth engine in raphain's oauth variant, which has no env/value."""
     auth = {"type": "oauth"}
     if engine.auth_access_token_env:
@@ -165,10 +173,14 @@ def _oauth_block(engine) -> dict:
     refresh = _stored_document(engine.get("auth_refresh"))
     if refresh:
         auth["refresh"] = refresh
+    if include_secrets:
+        access_token = _stored_secret(engine, "auth_access_token")
+        if access_token:
+            auth["access_token"] = access_token
     return auth
 
 
-def _auth_block(engine):
+def _auth_block(engine, include_secrets=False):
     """Describe how the runner authenticates, as a reference rather than a secret.
 
     raphain's AuthConfig is a tagged union: each auth type has its own set of
@@ -178,16 +190,20 @@ def _auth_block(engine):
     if auth_type == "none":
         return None
     if auth_type == "oauth":
-        return _oauth_block(engine)
+        return _oauth_block(engine, include_secrets=include_secrets)
     auth = {"type": auth_type}
     if engine.auth_env:
         auth["env"] = engine.auth_env
     if auth_type == "api_key" and engine.auth_header:
         auth["header"] = engine.auth_header
+    if include_secrets:
+        secret = _stored_secret(engine, "auth_secret")
+        if secret:
+            auth["value"] = secret
     return auth
 
 
-def _provider(engine):
+def _provider(engine, include_secrets=False):
     """Describe one engine as a raphain ProviderConfig, without null keys."""
     provider = {"name": engine.engine_name, "kind": engine.kind, "model": engine.model}
     if engine.base_url:
@@ -196,7 +212,7 @@ def _provider(engine):
         document = _stored_document(engine.get(fieldname))
         if document:
             provider[fieldname] = document
-    auth = _auth_block(engine)
+    auth = _auth_block(engine, include_secrets=include_secrets)
     if auth:
         provider["auth"] = auth
     return provider
@@ -204,12 +220,20 @@ def _provider(engine):
 
 @frappe.whitelist()
 @agent_only
-def registry_document() -> dict:
+def registry_document(include_secrets: int | bool = 0) -> dict:
     """Return the raphain RegistryConfig for the engines that are enabled.
 
     raphain reads this document straight off disk and rejects nulls, so a key
-    whose value is unset is left out rather than exported as None.
+    whose value is unset is left out rather than exported as None. Inline
+    secrets stay behind unless an administrator asks for them, so the usual
+    export is safe to write to disk and hand to a runner.
     """
+    include_secrets = cint(include_secrets)
+    if include_secrets and not is_admin():
+        frappe.throw(
+            _("Only an administrator may export AI engine secrets."),
+            frappe.PermissionError,
+        )
     document = {}
     default = default_engine()
     if default:
@@ -220,5 +244,7 @@ def registry_document() -> dict:
         fields=REGISTRY_FIELDS,
         order_by="creation asc",
     )
-    document["providers"] = [_provider(engine) for engine in engines]
+    document["providers"] = [
+        _provider(engine, include_secrets=include_secrets) for engine in engines
+    ]
     return document
