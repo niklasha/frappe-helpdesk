@@ -16,6 +16,26 @@ from helpdesk.utils import agent_only, is_admin
 
 ENGINE_FIELDS = ["engine_name", "kind", "model", "base_url", "is_default"]
 
+REGISTRY_FIELDS = [
+    "engine_name",
+    "kind",
+    "model",
+    "base_url",
+    "auth_type",
+    "auth_env",
+    "auth_header",
+    "auth_access_token_env",
+    "auth_refresh_token_env",
+    "auth_expires_at_unix",
+    "auth_refresh",
+    "parameters",
+    "headers",
+    "options",
+    "pricing",
+]
+
+DOCUMENT_FIELDS = ("parameters", "headers", "options", "pricing")
+
 
 def _require_admin() -> None:
     """Choosing which model the helpdesk talks to is an administrative act."""
@@ -122,3 +142,83 @@ def default_engine() -> str | None:
     return frappe.db.get_value(
         "HD AI Engine", {"is_default": 1, "enabled": 1}, "engine_name"
     )
+
+
+def _stored_document(value):
+    """Return a stored JSON docfield as data, or None when it holds nothing."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+def _oauth_block(engine) -> dict:
+    """Describe an OAuth engine in raphain's oauth variant, which has no env/value."""
+    auth = {"type": "oauth"}
+    if engine.auth_access_token_env:
+        auth["access_token_env"] = engine.auth_access_token_env
+    if engine.auth_refresh_token_env:
+        auth["refresh_token_env"] = engine.auth_refresh_token_env
+    if engine.auth_expires_at_unix:
+        auth["expires_at_unix"] = cint(engine.auth_expires_at_unix)
+    refresh = _stored_document(engine.get("auth_refresh"))
+    if refresh:
+        auth["refresh"] = refresh
+    return auth
+
+
+def _auth_block(engine):
+    """Describe how the runner authenticates, as a reference rather than a secret.
+
+    raphain's AuthConfig is a tagged union: each auth type has its own set of
+    keys, and a key belonging to another variant makes the document invalid.
+    """
+    auth_type = engine.auth_type or "none"
+    if auth_type == "none":
+        return None
+    if auth_type == "oauth":
+        return _oauth_block(engine)
+    auth = {"type": auth_type}
+    if engine.auth_env:
+        auth["env"] = engine.auth_env
+    if auth_type == "api_key" and engine.auth_header:
+        auth["header"] = engine.auth_header
+    return auth
+
+
+def _provider(engine):
+    """Describe one engine as a raphain ProviderConfig, without null keys."""
+    provider = {"name": engine.engine_name, "kind": engine.kind, "model": engine.model}
+    if engine.base_url:
+        provider["base_url"] = engine.base_url
+    for fieldname in DOCUMENT_FIELDS:
+        document = _stored_document(engine.get(fieldname))
+        if document:
+            provider[fieldname] = document
+    auth = _auth_block(engine)
+    if auth:
+        provider["auth"] = auth
+    return provider
+
+
+@frappe.whitelist()
+@agent_only
+def registry_document() -> dict:
+    """Return the raphain RegistryConfig for the engines that are enabled.
+
+    raphain reads this document straight off disk and rejects nulls, so a key
+    whose value is unset is left out rather than exported as None.
+    """
+    document = {}
+    default = default_engine()
+    if default:
+        document["default"] = default
+    engines = frappe.get_all(
+        "HD AI Engine",
+        filters={"enabled": 1},
+        fields=REGISTRY_FIELDS,
+        order_by="creation asc",
+    )
+    document["providers"] = [_provider(engine) for engine in engines]
+    return document
