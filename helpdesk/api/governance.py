@@ -19,6 +19,11 @@ EVENT_FIELDS = [
 
 CONFIGURATION_ACTION = "changed configuration"
 
+AUTOMATION_MANAGER_ROLE = "Helpdesk Automation Manager"
+AI_MANAGER_ROLE = "Helpdesk AI Manager"
+KNOWLEDGE_MANAGER_ROLE = "Helpdesk Knowledge Manager"
+HELPDESK_ROLES = (AUTOMATION_MANAGER_ROLE, AI_MANAGER_ROLE, KNOWLEDGE_MANAGER_ROLE)
+
 
 def _as_text(details):
     """Automation details reach the log as text, whatever shape the caller used."""
@@ -104,6 +109,23 @@ def configuration_changes(reference_doctype=None, limit=100):
         fields=EVENT_FIELDS,
         order_by="creation desc",
         limit_page_length=cint(limit) or 100,
+    )
+
+
+@frappe.whitelist()
+@agent_only
+def has_helpdesk_role(role):
+    """Whether the session user carries the given helpdesk role."""
+    return role in frappe.get_roles(frappe.session.user)
+
+
+def require_role(role):
+    """Refuse the change unless the session user holds the role or administers the site."""
+    if is_admin() or has_helpdesk_role(role):
+        return
+    frappe.throw(
+        _("The role {0} is required to make this change.").format(role),
+        frappe.PermissionError,
     )
 
 

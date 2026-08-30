@@ -52,4 +52,5 @@ helpdesk.patches.add_tag_custom_fields
 helpdesk.patches.rename_purple_status_color
 helpdesk.patches.seed_wave1_statuses
 helpdesk.patches.seed_wave4_languages
+helpdesk.patches.seed_wave5_roles
 helpdesk.patches.set_default_portal_settings
