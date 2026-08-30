@@ -252,7 +252,7 @@ class HDTicket(Document):
         if not agent.is_active:
             return False
         if not agent.availability:
-            return True
+            return False
         return bool(frappe.db.get_value("HD Agent Status", {"name": agent.availability, "category": "Active", "enable": 1}))
 
     def on_update(self):
