@@ -8,7 +8,9 @@ from helpdesk.utils import agent_only, is_admin
 
 @frappe.whitelist()
 @agent_only
-def search_knowledge(query, limit=5, category=None):
+def search_knowledge(
+    query: str, limit: int | None = 5, category: str | None = None
+) -> list:
     """Return knowledge-library articles matching the query.
 
     The AI reply layer retrieves candidate source material through this
@@ -42,7 +44,12 @@ def _require_knowledge_admin():
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def upsert_knowledge_article(title, content, category=None, article=None):
+def upsert_knowledge_article(
+    title: str,
+    content: str,
+    category: str | None = None,
+    article: str | None = None,
+) -> dict:
     """Create or update a knowledge-library article as an authorized user."""
     _require_knowledge_admin()
     doc = (
@@ -58,7 +65,7 @@ def upsert_knowledge_article(title, content, category=None, article=None):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def approve_knowledge_article(article):
+def approve_knowledge_article(article: str) -> dict:
     """Approve the current version of an article for use in AI replies."""
     _require_knowledge_admin()
     doc = frappe.get_doc("HD Article", article)
