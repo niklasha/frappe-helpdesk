@@ -18,7 +18,7 @@ SYNCABLE_CUSTOMER_FIELDS = (
 
 @frappe.whitelist()
 @agent_only
-def list_external_systems():
+def list_external_systems() -> list:
     """Return the external systems Helpdesk is configured to reach."""
     return frappe.get_all(
         "HD External System",
@@ -42,7 +42,7 @@ def _enabled_system(system):
 
 @frappe.whitelist()
 @agent_only
-def external_link_url(system, identifier):
+def external_link_url(system: str | None, identifier: str | None) -> str | None:
     """Resolve a deep link into an external system from its link template."""
     row = _enabled_system(system)
     if not row or not row.link_template:
@@ -52,7 +52,7 @@ def external_link_url(system, identifier):
 
 @frappe.whitelist()
 @agent_only
-def ticket_external_links(ticket_id):
+def ticket_external_links(ticket_id: str) -> list:
     """Return a ticket's external links, each with its resolved URL."""
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     links = frappe.get_all(
@@ -68,7 +68,11 @@ def ticket_external_links(ticket_id):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def sync_customer(customer, external_id=None, values=None):
+def sync_customer(
+    customer: str,
+    external_id: str | None = None,
+    values: dict | list | str | None = None,
+) -> dict:
     """Store the external system's view of a customer on its Helpdesk record."""
     frappe.has_permission("HD Customer", "write", doc=customer, throw=True)
     doc = frappe.get_doc("HD Customer", customer)
@@ -86,13 +90,13 @@ def sync_customer(customer, external_id=None, values=None):
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def record_customer_history(
-    customer,
-    record_type,
-    external_id,
-    summary=None,
-    occurred_on=None,
-    idempotency_key=None,
-):
+    customer: str,
+    record_type: str,
+    external_id: str,
+    summary: str | None = None,
+    occurred_on: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
     """Record an order or proof a customer already has in an external system."""
     if idempotency_key:
         name = frappe.db.get_value(
@@ -117,7 +121,7 @@ def record_customer_history(
 
 @frappe.whitelist()
 @agent_only
-def customer_history(customer, record_type=None):
+def customer_history(customer: str, record_type: str | None = None) -> list:
     """Return what a customer has ordered or approved before, newest first."""
     filters = {"customer": customer}
     if record_type:
@@ -139,14 +143,14 @@ def customer_history(customer, record_type=None):
 
 @frappe.whitelist()
 @agent_only
-def customer_proofs(customer):
+def customer_proofs(customer: str) -> list:
     """Return the proofs a customer has seen before, newest first."""
     return customer_history(customer, record_type="Proof")
 
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def sync_account_manager(customer, account_manager):
+def sync_account_manager(customer: str, account_manager: str) -> dict:
     """Take the customer's account owner from the external system."""
     frappe.has_permission("HD Customer", "write", doc=customer, throw=True)
     if not frappe.db.exists("User", account_manager):
