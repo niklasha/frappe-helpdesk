@@ -13,6 +13,7 @@
   "account_manager",
   "key_account_agent",
   "language",
+  "ai_training_consent",
   "domain",
   "erpnext_customer",
   "country",
@@ -63,6 +64,13 @@
    "fieldtype": "Link",
    "label": "Language",
    "options": "HD Supported Language"
+  },
+  {
+   "default": "0",
+   "description": "Whether this customer has consented to their data being used to train AI",
+   "fieldname": "ai_training_consent",
+   "fieldtype": "Check",
+   "label": "AI Training Consent"
   },
   {
    "fieldname": "domain",
