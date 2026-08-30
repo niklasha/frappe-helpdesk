@@ -18,6 +18,7 @@
   "cb00",
   "ticket_type",
   "classification_model",
+  "production_option",
   "agent_group",
   "summary",
   "sb_details",
@@ -135,6 +136,13 @@
    "fieldtype": "Select",
    "label": "Classification Model",
    "options": "Order\nReklamation\nProduktfråga\nWebshop\nÖvrigt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "production_option",
+   "fieldtype": "Select",
+   "label": "Production Option",
+   "options": "Standard\nExpress\nDEX",
    "read_only": 1
   },
   {
