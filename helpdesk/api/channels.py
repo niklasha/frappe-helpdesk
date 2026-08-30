@@ -1,5 +1,6 @@
 import frappe
 from frappe import _
+from frappe.utils import now_datetime
 
 from helpdesk.utils import agent_only, get_customers
 
@@ -24,6 +25,22 @@ def _get_call(external_call_id):
     if not name:
         frappe.throw(_("No call is recorded for {0}.").format(external_call_id))
     return frappe.get_doc("HD Call Record", name)
+
+
+def _get_chat(external_conversation_id):
+    """Load the conversation recorded under this external id, refusing an unknown one."""
+    name = frappe.db.get_value(
+        "HD Chat Conversation",
+        {"external_conversation_id": external_conversation_id},
+        "name",
+    )
+    if not name:
+        frappe.throw(
+            _("No chat conversation is recorded for {0}.").format(
+                external_conversation_id
+            )
+        )
+    return frappe.get_doc("HD Chat Conversation", name)
 
 
 def _find_contact(number):
@@ -138,5 +155,54 @@ def match_call_customer(external_call_id):
     customers = get_customers(contact=contact)
     if customers:
         doc.customer = customers[0]
+    doc.save(ignore_permissions=True)
+    return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def record_chat(
+    external_conversation_id, visitor=None, visitor_email=None, transcript=None
+):
+    """Persist a website chat conversation, replayable by its external id."""
+    existing = frappe.db.get_value(
+        "HD Chat Conversation",
+        {"external_conversation_id": external_conversation_id},
+        "name",
+    )
+    if existing:
+        return frappe.get_doc("HD Chat Conversation", existing).as_dict()
+    doc = frappe.get_doc(
+        {
+            "doctype": "HD Chat Conversation",
+            "external_conversation_id": external_conversation_id,
+            "visitor": visitor,
+            "visitor_email": visitor_email,
+            "transcript": transcript,
+            "started_on": now_datetime(),
+        }
+    )
+    doc.insert(ignore_permissions=True)
+    return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def create_ticket_from_chat(external_conversation_id, subject=None):
+    """Turn a chat conversation into a ticket, keeping the ticket it already has."""
+    doc = _get_chat(external_conversation_id)
+    if doc.ticket:
+        return doc.as_dict()
+    values = {
+        "doctype": "HD Ticket",
+        "subject": subject
+        or _("Chat with {0}").format(doc.visitor or doc.external_conversation_id),
+        "description": doc.transcript or "",
+    }
+    if doc.visitor_email:
+        values["raised_by"] = doc.visitor_email
+    created = frappe.get_doc(values)
+    created.insert(ignore_permissions=True)
+    doc.ticket = created.name
     doc.save(ignore_permissions=True)
     return doc.as_dict()
