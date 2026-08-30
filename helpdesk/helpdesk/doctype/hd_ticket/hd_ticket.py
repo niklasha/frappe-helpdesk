@@ -471,6 +471,10 @@ class HDTicket(Document):
         if self.priority:
             return
         subject = (self.subject or "").lower()
+        if any(keyword in subject for keyword in ("urgent", "akut")):
+            self.priority = frappe.db.get_value("HD Ticket Priority", {"level": "Urgent"}, "name")
+            if self.priority:
+                return
         if "dex" in subject:
             self.priority = frappe.db.get_value("HD Ticket Priority", {"level": "Urgent"}, "name")
             if self.priority:
