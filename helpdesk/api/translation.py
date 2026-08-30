@@ -29,7 +29,7 @@ def detect_language_code(text):
 
 @frappe.whitelist()
 @agent_only
-def detect_language(text):
+def detect_language(text: str) -> str | None:
     """Return the detected language code of a message, or None when unclear."""
     return detect_language_code(text)
 
@@ -47,16 +47,16 @@ def _validate_supported_language(language_code):
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def record_translation(
-    ticket_id,
-    original_text,
-    translated_text=None,
-    source_language=None,
-    target_language=None,
-    direction="Inbound",
-    provider=None,
-    model_version=None,
-    idempotency_key=None,
-):
+    ticket_id: str,
+    original_text: str,
+    translated_text: str | None = None,
+    source_language: str | None = None,
+    target_language: str | None = None,
+    direction: str = "Inbound",
+    provider: str | None = None,
+    model_version: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
     """Persist a translation next to its original text, replayable by key."""
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     source_language = source_language or detect_language_code(original_text)
@@ -100,7 +100,7 @@ def list_supported_languages():
 
 @frappe.whitelist()
 @agent_only
-def get_customer_language(customer):
+def get_customer_language(customer: str) -> str | None:
     """Return the language a customer prefers to be answered in."""
     return frappe.db.get_value("HD Customer", customer, "language")
 
@@ -108,14 +108,14 @@ def get_customer_language(customer):
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def translate_inbound(
-    ticket_id,
-    original_text,
-    translated_text=None,
-    target_language="sv",
-    provider=None,
-    model_version=None,
-    idempotency_key=None,
-):
+    ticket_id: str,
+    original_text: str,
+    translated_text: str | None = None,
+    target_language: str = "sv",
+    provider: str | None = None,
+    model_version: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
     """Record the Swedish translation of a message a customer sent us."""
     return record_translation(
         ticket_id=ticket_id,
@@ -138,14 +138,14 @@ def _ticket_customer_language(ticket_id):
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def translate_outbound(
-    ticket_id,
-    original_text,
-    translated_text=None,
-    target_language=None,
-    provider=None,
-    model_version=None,
-    idempotency_key=None,
-):
+    ticket_id: str,
+    original_text: str,
+    translated_text: str | None = None,
+    target_language: str | None = None,
+    provider: str | None = None,
+    model_version: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
     """Record an agent's Swedish reply translated into the customer's language."""
     return record_translation(
         ticket_id=ticket_id,
@@ -162,7 +162,9 @@ def translate_outbound(
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def review_translation(translation_id, translated_text=None):
+def review_translation(
+    translation_id: str, translated_text: str | None = None
+) -> dict:
     """Record an agent's review, and any correction, of a translation."""
     doc = frappe.get_doc("HD Message Translation", translation_id)
     if translated_text:
@@ -176,7 +178,7 @@ def review_translation(translation_id, translated_text=None):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def mark_translation_sent(translation_id):
+def mark_translation_sent(translation_id: str) -> dict:
     """Send a translation; an outbound one must be reviewed by an agent first."""
     doc = frappe.get_doc("HD Message Translation", translation_id)
     if doc.direction == "Outbound" and not doc.reviewed:
