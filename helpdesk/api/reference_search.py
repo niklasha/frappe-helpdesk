@@ -64,3 +64,50 @@ def search_tickets_by_correction(reference):
     if not reference:
         return []
     return _newest_first(_link_matches(reference, "correction"))
+
+
+def _extraction_matches(reference):
+    """Return result rows for extracted orders naming the article."""
+    extractions = frappe.get_all(
+        "HD Order Extraction",
+        filters={"product": reference},
+        fields=["ticket"],
+        order_by="creation desc",
+    )
+    rows = []
+    for extraction in extractions:
+        ticket = _ticket_row(extraction["ticket"])
+        if not ticket:
+            continue
+        rows.append(
+            {
+                "ticket": ticket["name"],
+                "subject": ticket["subject"],
+                "link_type": "article",
+                "target": reference,
+                "_creation": ticket["creation"],
+            }
+        )
+    return rows
+
+
+def _without_duplicate_tickets(rows):
+    """Keep the first row of every ticket, so a ticket is reported once."""
+    seen = set()
+    unique = []
+    for row in rows:
+        if row["ticket"] in seen:
+            continue
+        seen.add(row["ticket"])
+        unique.append(row)
+    return unique
+
+
+@frappe.whitelist()
+@agent_only
+def search_tickets_by_article(reference):
+    """Find tickets by article number, in links and in extracted orders."""
+    if not reference:
+        return []
+    rows = _link_matches(reference, "article") + _extraction_matches(reference)
+    return _newest_first(_without_duplicate_tickets(rows))
