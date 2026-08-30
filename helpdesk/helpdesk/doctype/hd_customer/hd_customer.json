@@ -11,6 +11,7 @@
   "customer_name",
   "customer_type",
   "account_manager",
+  "key_account_agent",
   "domain",
   "erpnext_customer",
   "country",
@@ -47,6 +48,13 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Account Manager",
+   "options": "User"
+  },
+  {
+   "fieldname": "key_account_agent",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Key Account Agent",
    "options": "User"
   },
   {

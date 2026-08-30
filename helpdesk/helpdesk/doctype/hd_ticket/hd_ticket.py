@@ -239,10 +239,10 @@ class HDTicket(Document):
                 return
 
     def get_customer_account_manager(self):
-        """Return the manager configured on this ticket's customer, if any."""
+        """Return the key-account owner or manager configured on the customer."""
         if not self.customer:
             return None
-        return frappe.db.get_value("HD Customer", self.customer, "account_manager")
+        return frappe.db.get_value("HD Customer", self.customer, ["key_account_agent", "account_manager"], as_dict=True).key_account_agent or frappe.db.get_value("HD Customer", self.customer, "account_manager")
 
     def is_assignable_agent(self, user):
         """Only active agents with an enabled availability status may receive work."""
