@@ -4,8 +4,26 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, now_datetime, strip_html
 
+from helpdesk.api import ai_engine, ai_runner
 from helpdesk.api.knowledge_library import search_knowledge
 from helpdesk.utils import agent_only
+
+KNOWLEDGE_REPLY_INSTRUCTIONS = (
+    "Answer the customer question using only the approved knowledge below. "
+    "When the knowledge does not cover the question, say so plainly instead of "
+    "guessing, and offer to pass the question to a colleague."
+)
+
+
+def _reply_messages(instructions, knowledge, question):
+    """Show the engine its instructions and the approved knowledge, then the question."""
+    return [
+        {
+            "role": "system",
+            "content": f"{instructions}\n\nApproved knowledge:\n{knowledge}",
+        },
+        {"role": "user", "content": question},
+    ]
 
 
 def _apply_auto_reply_policy(doc):
@@ -93,7 +111,21 @@ def draft_knowledge_reply(
         }
         for article in articles
     ]
-    body = "\n\n".join(strip_html(article.content or "") for article in articles)
+    knowledge = "\n\n".join(strip_html(article.content or "") for article in articles)
+    body = knowledge
+    provider = None
+    model_version = None
+    engine = ai_engine.default_engine() if ai_runner.is_runner_available() else None
+    if engine:
+        response = ai_runner.generate(
+            engine=engine,
+            messages=_reply_messages(
+                KNOWLEDGE_REPLY_INSTRUCTIONS, knowledge, question
+            ),
+        )
+        body = response.get("text")
+        provider = response.get("provider")
+        model_version = response.get("model")
     return record_reply_draft(
         ticket_id=ticket_id,
         body=body,
@@ -102,6 +134,8 @@ def draft_knowledge_reply(
         language=language,
         sources=sources,
         confidence=1 if sources else 0,
+        provider=provider,
+        model_version=model_version,
         idempotency_key=idempotency_key,
     )
 
