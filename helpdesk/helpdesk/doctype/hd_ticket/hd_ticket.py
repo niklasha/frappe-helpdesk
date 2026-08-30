@@ -175,6 +175,7 @@ class HDTicket(Document):
         self.capture_ticket_created_telemetry_events()
         publish_event("helpdesk:new-ticket")
         self.tag_first_ticket()
+        self.assign_suitable_agent()
 
         if self.get("description"):
             self.create_communication_via_contact(self.description, new_ticket=True)
@@ -223,6 +224,16 @@ class HDTicket(Document):
             return
 
         self.add_tag(FIRST_TICKET_TAG, FIRST_TICKET_TAG_COLOR)
+
+    def assign_suitable_agent(self):
+        """Assign a new ticket to the first active agent when one is available."""
+        if self.get("_assign"):
+            return
+        agent = frappe.db.get_value(
+            "HD Agent", {"is_active": 1}, "user", order_by="modified asc"
+        )
+        if agent:
+            assign({"assign_to": [agent], "doctype": "HD Ticket", "name": self.name})
 
     def on_update(self):
         # flake8: noqa
