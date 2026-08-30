@@ -137,6 +137,7 @@ ignore_links_on_delete = [
     "HD Call Record",
     "HD Chat Conversation",
     "HD Automation Event",
+    "HD AI Engine",
 ]
 
 # setup wizard
