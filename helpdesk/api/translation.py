@@ -126,3 +126,34 @@ def translate_inbound(
         model_version=model_version,
         idempotency_key=idempotency_key,
     )
+
+
+def _ticket_customer_language(ticket_id):
+    """Return the language stored on the customer this ticket belongs to."""
+    customer = frappe.db.get_value("HD Ticket", ticket_id, "customer")
+    return get_customer_language(customer) if customer else None
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def translate_outbound(
+    ticket_id,
+    original_text,
+    translated_text=None,
+    target_language=None,
+    provider=None,
+    model_version=None,
+    idempotency_key=None,
+):
+    """Record an agent's Swedish reply translated into the customer's language."""
+    return record_translation(
+        ticket_id=ticket_id,
+        original_text=original_text,
+        translated_text=translated_text,
+        source_language="sv",
+        target_language=target_language or _ticket_customer_language(ticket_id),
+        direction="Outbound",
+        provider=provider,
+        model_version=model_version,
+        idempotency_key=idempotency_key,
+    )
