@@ -8,7 +8,9 @@ from helpdesk.utils import agent_only
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def record_extraction(ticket_id, idempotency_key=None, **values):
+def record_extraction(
+    ticket_id: str, idempotency_key: str | None = None, **values
+) -> dict:
     """Persist structured order extraction and derive completeness server-side."""
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     if idempotency_key:
@@ -31,7 +33,11 @@ def record_extraction(ticket_id, idempotency_key=None, **values):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def correct_extraction(extraction_id, corrections, reason=None):
+def correct_extraction(
+    extraction_id: str,
+    corrections: dict | list | str,
+    reason: str | None = None,
+) -> dict:
     doc = frappe.get_doc("HD Order Extraction", extraction_id)
     if isinstance(corrections, str):
         corrections = json.loads(corrections)
