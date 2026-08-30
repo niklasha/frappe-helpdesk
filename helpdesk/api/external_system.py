@@ -1,6 +1,7 @@
 import json
 
 import frappe
+from frappe import _
 from frappe.utils import now_datetime
 
 from helpdesk.utils import agent_only
@@ -141,3 +142,20 @@ def customer_history(customer, record_type=None):
 def customer_proofs(customer):
     """Return the proofs a customer has seen before, newest first."""
     return customer_history(customer, record_type="Proof")
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def sync_account_manager(customer, account_manager):
+    """Take the customer's account owner from the external system."""
+    frappe.has_permission("HD Customer", "write", doc=customer, throw=True)
+    if not frappe.db.exists("User", account_manager):
+        frappe.throw(_("User {0} does not exist.").format(account_manager))
+    doc = frappe.get_doc("HD Customer", customer)
+    doc.account_manager = account_manager
+    doc.save(ignore_permissions=True)
+    return {
+        "name": doc.name,
+        "account_manager": doc.account_manager,
+        "key_account_agent": doc.key_account_agent,
+    }
