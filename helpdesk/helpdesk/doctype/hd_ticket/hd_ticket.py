@@ -74,6 +74,7 @@ class HDTicket(Document):
 
     def before_validate(self):
         self.check_update_perms()
+        self.set_workflow_identifier()
         self.set_ticket_type()
         self.set_raised_by()
         self.set_priority()
@@ -269,6 +270,24 @@ class HDTicket(Document):
             return
         self.ticket_type = (
             frappe.db.get_single_value("HD Settings", "default_ticket_type") or ""
+        )
+
+    def set_workflow_identifier(self):
+        """Identify the operational workflow mentioned in the subject."""
+        if self.workflow_identifier and not self.is_new():
+            return
+        subject = (self.subject or "").lower()
+        workflows = (
+            (("create order", "skapa order"), "Create order"),
+            (("awaiting information", "väntar information"), "Awaiting information"),
+            (("awaiting shipping", "väntar frakt"), "Awaiting shipping"),
+            (("india",), "India"),
+            (("vectorizer",), "Vectorizer"),
+            (("existing original", "befintligt original"), "Existing original"),
+        )
+        self.workflow_identifier = next(
+            (label for keywords, label in workflows if any(k in subject for k in keywords)),
+            "",
         )
 
     def set_raised_by(self):
