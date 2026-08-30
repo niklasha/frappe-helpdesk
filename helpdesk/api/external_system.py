@@ -1,6 +1,17 @@
+import json
+
 import frappe
 
 from helpdesk.utils import agent_only
+
+SYNCABLE_CUSTOMER_FIELDS = (
+    "customer_name",
+    "customer_type",
+    "domain",
+    "erpnext_customer",
+    "country",
+    "image",
+)
 
 
 @frappe.whitelist()
@@ -51,3 +62,20 @@ def ticket_external_links(ticket_id):
     for link in links:
         link["url"] = external_link_url(link["link_type"], link["target"])
     return links
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def sync_customer(customer, external_id=None, values=None):
+    """Store the external system's view of a customer on its Helpdesk record."""
+    frappe.has_permission("HD Customer", "write", doc=customer, throw=True)
+    doc = frappe.get_doc("HD Customer", customer)
+    if external_id:
+        doc.erpnext_customer = external_id
+    if isinstance(values, str):
+        values = json.loads(values)
+    for field, value in (values or {}).items():
+        if field in SYNCABLE_CUSTOMER_FIELDS:
+            setattr(doc, field, value)
+    doc.save(ignore_permissions=True)
+    return doc.as_dict()
