@@ -22,6 +22,10 @@
   "workflow_identifier",
   "shipping_method",
   "external_mail",
+  "assignment_reason",
+  "message_id",
+  "new_order_from_old_thread",
+  "duplicate_score",
   "agent_group",
   "summary",
   "sb_details",
@@ -166,6 +170,29 @@
    "fieldname": "external_mail",
    "fieldtype": "Check",
    "label": "External Mail",
+   "read_only": 1
+  },
+  {
+   "fieldname": "assignment_reason",
+   "fieldtype": "Small Text",
+   "label": "Assignment Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "message_id",
+   "fieldtype": "Data",
+   "label": "Message ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "new_order_from_old_thread",
+   "fieldtype": "Check",
+   "label": "New Order From Old Thread"
+  },
+  {
+   "fieldname": "duplicate_score",
+   "fieldtype": "Percent",
+   "label": "Duplicate Score",
    "read_only": 1
   },
   {
