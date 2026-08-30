@@ -17,6 +17,8 @@ EVENT_FIELDS = [
     "performed_by",
 ]
 
+CONFIGURATION_ACTION = "changed configuration"
+
 
 def _as_text(details):
     """Automation details reach the log as text, whatever shape the caller used."""
@@ -76,6 +78,35 @@ def automation_events(reference_doctype=None, reference_name=None, limit=20):
     )
 
 
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def log_configuration_change(reference_doctype, reference_name, details=None):
+    """Record that a person changed one of the rules the helpdesk runs on."""
+    return log_automation_event(
+        CONFIGURATION_ACTION,
+        actor="User",
+        reference_doctype=reference_doctype,
+        reference_name=reference_name,
+        details=details,
+    )
+
+
+@frappe.whitelist()
+@agent_only
+def configuration_changes(reference_doctype=None, limit=100):
+    """Return the logged changes to critical configuration, newest first."""
+    filters = {"actor": "User", "action": CONFIGURATION_ACTION}
+    if reference_doctype:
+        filters["reference_doctype"] = reference_doctype
+    return frappe.get_all(
+        "HD Automation Event",
+        filters=filters,
+        fields=EVENT_FIELDS,
+        order_by="creation desc",
+        limit_page_length=cint(limit) or 100,
+    )
+
+
 def _require_prompt_admin():
     """Deciding what the AI is told to do is an administrative act."""
     if not is_admin():
@@ -99,10 +130,5 @@ def upsert_ai_prompt(prompt_name, prompt, purpose=None):
     if purpose is not None:
         doc.purpose = purpose
     doc.save(ignore_permissions=True)
-    log_automation_event(
-        "administered AI prompt",
-        reference_doctype="HD AI Prompt",
-        reference_name=doc.name,
-        details=doc.prompt,
-    )
+    log_configuration_change("HD AI Prompt", doc.name, details=doc.prompt)
     return doc.as_dict()
