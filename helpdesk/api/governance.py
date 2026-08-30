@@ -1,9 +1,10 @@
 import json
 
 import frappe
+from frappe import _
 from frappe.utils import cint
 
-from helpdesk.utils import agent_only
+from helpdesk.utils import agent_only, is_admin
 
 EVENT_FIELDS = [
     "name",
@@ -73,3 +74,35 @@ def automation_events(reference_doctype=None, reference_name=None, limit=20):
         order_by="creation desc",
         limit_page_length=cint(limit) or 20,
     )
+
+
+def _require_prompt_admin():
+    """Deciding what the AI is told to do is an administrative act."""
+    if not is_admin():
+        frappe.throw(
+            _("You are not permitted to administer AI prompts."),
+            frappe.PermissionError,
+        )
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def upsert_ai_prompt(prompt_name, prompt, purpose=None):
+    """Create or update an AI prompt, recording the change as an event."""
+    _require_prompt_admin()
+    if frappe.db.exists("HD AI Prompt", prompt_name):
+        doc = frappe.get_doc("HD AI Prompt", prompt_name)
+    else:
+        doc = frappe.new_doc("HD AI Prompt")
+        doc.prompt_name = prompt_name
+    doc.prompt = prompt
+    if purpose is not None:
+        doc.purpose = purpose
+    doc.save(ignore_permissions=True)
+    log_automation_event(
+        "administered AI prompt",
+        reference_doctype="HD AI Prompt",
+        reference_name=doc.name,
+        details=doc.prompt,
+    )
+    return doc.as_dict()
