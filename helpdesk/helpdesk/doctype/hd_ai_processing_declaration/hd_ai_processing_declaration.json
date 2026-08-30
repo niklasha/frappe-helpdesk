@@ -1,0 +1,9 @@
+{
+ "actions": [], "autoname": "field:provider", "creation": "2026-08-30 00:00:00.000000", "doctype": "DocType", "engine": "InnoDB",
+ "field_order": ["provider", "purpose", "data_categories", "agreement_reference", "hosting_region"],
+ "fields": [
+  {"fieldname":"provider","fieldtype":"Data","label":"Provider","reqd":1,"unique":1}, {"fieldname":"purpose","fieldtype":"Data","label":"Purpose"}, {"fieldname":"data_categories","fieldtype":"Small Text","label":"Data Categories"}, {"fieldname":"agreement_reference","fieldtype":"Data","label":"Agreement Reference"}, {"fieldname":"hosting_region","fieldtype":"Data","label":"Hosting Region"}
+ ],
+ "links": [], "modified": "2026-08-30 00:00:00.000000", "modified_by": "Administrator", "module": "Helpdesk", "name": "HD AI Processing Declaration", "naming_rule": "By fieldname", "owner": "Administrator",
+ "permissions": [{"create":1,"delete":1,"read":1,"role":"System Manager","write":1},{"create":1,"read":1,"role":"Agent","write":1}], "sort_field":"modified", "sort_order":"DESC", "states":[], "track_changes":1
+}
