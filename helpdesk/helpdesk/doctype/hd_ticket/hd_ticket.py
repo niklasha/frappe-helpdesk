@@ -232,6 +232,7 @@ class HDTicket(Document):
         account_manager = self.get_customer_account_manager()
         if account_manager and self.is_assignable_agent(account_manager):
             assign({"assign_to": [account_manager], "doctype": "HD Ticket", "name": self.name})
+            self.db_set("_assign", json.dumps([account_manager]), update_modified=False)
             return
         for agent in frappe.db.get_all("HD Agent", filters={"is_active": 1}, fields=["user"], order_by="modified asc"):
             if self.is_assignable_agent(agent.user):
