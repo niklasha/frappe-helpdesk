@@ -1,0 +1,35 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-30 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["external_call_id", "direction", "from_number", "to_number", "started_on", "duration", "recording_url", "transcript", "ticket", "customer", "contact"],
+ "fields": [
+  {"fieldname": "external_call_id", "fieldtype": "Data", "in_list_view": 1, "label": "External Call ID", "reqd": 1, "unique": 1},
+  {"fieldname": "direction", "fieldtype": "Select", "in_list_view": 1, "label": "Direction", "options": "Inbound\nOutbound"},
+  {"fieldname": "from_number", "fieldtype": "Data", "in_list_view": 1, "label": "From Number"},
+  {"fieldname": "to_number", "fieldtype": "Data", "label": "To Number"},
+  {"fieldname": "started_on", "fieldtype": "Datetime", "label": "Started On"},
+  {"fieldname": "duration", "fieldtype": "Int", "label": "Duration"},
+  {"fieldname": "recording_url", "fieldtype": "Data", "label": "Recording URL"},
+  {"fieldname": "transcript", "fieldtype": "Long Text", "label": "Transcript"},
+  {"fieldname": "ticket", "fieldtype": "Link", "label": "Ticket", "options": "HD Ticket"},
+  {"fieldname": "customer", "fieldtype": "Link", "label": "Customer", "options": "HD Customer"},
+  {"fieldname": "contact", "fieldtype": "Link", "label": "Contact", "options": "Contact"}
+ ],
+ "links": [],
+ "modified": "2026-08-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Helpdesk",
+ "name": "HD Call Record",
+ "owner": "Administrator",
+ "permissions": [
+  {"create": 1, "delete": 1, "read": 1, "role": "System Manager", "write": 1},
+  {"create": 1, "read": 1, "role": "Agent", "write": 1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
