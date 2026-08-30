@@ -11,6 +11,7 @@
   "status",
   "published_on",
   "views",
+  "version",
   "column_break_7",
   "category",
   "author",
@@ -85,6 +86,12 @@
    "fieldname": "views",
    "fieldtype": "Int",
    "label": "Views",
+   "read_only": 1
+  },
+  {
+   "fieldname": "version",
+   "fieldtype": "Int",
+   "label": "Version",
    "read_only": 1
   }
  ],
