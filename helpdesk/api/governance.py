@@ -129,20 +129,16 @@ def require_role(role):
     )
 
 
-def _require_prompt_admin():
+def require_ai_prompt_admin():
     """Deciding what the AI is told to do is an administrative act."""
-    if not is_admin():
-        frappe.throw(
-            _("You are not permitted to administer AI prompts."),
-            frappe.PermissionError,
-        )
+    require_role(AI_MANAGER_ROLE)
 
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def upsert_ai_prompt(prompt_name, prompt, purpose=None):
     """Create or update an AI prompt, recording the change as an event."""
-    _require_prompt_admin()
+    require_ai_prompt_admin()
     if frappe.db.exists("HD AI Prompt", prompt_name):
         doc = frappe.get_doc("HD AI Prompt", prompt_name)
     else:

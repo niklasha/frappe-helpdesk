@@ -5,7 +5,16 @@ class HDAIPrompt(Document):
     """An instruction given to the AI, kept under administrative control."""
 
     def validate(self):
+        self.require_prompt_administration()
         self.bump_version()
+
+    def require_prompt_administration(self):
+        """The role gate holds on every save path, not only the governed API."""
+        if self.flags.ignore_permissions:
+            return
+        from helpdesk.api.governance import require_ai_prompt_admin
+
+        require_ai_prompt_admin()
 
     def bump_version(self):
         """Every change to a prompt's content becomes a new version of it."""

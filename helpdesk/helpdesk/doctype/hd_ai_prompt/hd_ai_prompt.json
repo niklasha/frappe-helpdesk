@@ -5,5 +5,5 @@
   {"fieldname":"prompt_name","fieldtype":"Data","label":"Prompt Name","reqd":1,"unique":1}, {"fieldname":"purpose","fieldtype":"Data","label":"Purpose"}, {"fieldname":"prompt","fieldtype":"Long Text","label":"Prompt"}, {"fieldname":"version","fieldtype":"Int","label":"Version"}, {"default":"1","fieldname":"enabled","fieldtype":"Check","label":"Enabled"}
  ],
  "links": [], "modified": "2026-08-30 00:00:00.000000", "modified_by": "Administrator", "module": "Helpdesk", "name": "HD AI Prompt", "naming_rule": "By fieldname", "owner": "Administrator",
- "permissions": [{"create":1,"delete":1,"read":1,"role":"System Manager","write":1},{"read":1,"role":"Agent"}], "sort_field":"modified", "sort_order":"DESC", "states":[], "track_changes":1
+ "permissions": [{"create":1,"delete":1,"read":1,"role":"System Manager","write":1},{"read":1,"role":"Agent"},{"create":1,"read":1,"role":"Helpdesk AI Manager","write":1}], "sort_field":"modified", "sort_order":"DESC", "states":[], "track_changes":1
 }
