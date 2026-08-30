@@ -102,3 +102,27 @@ def list_supported_languages():
 def get_customer_language(customer):
     """Return the language a customer prefers to be answered in."""
     return frappe.db.get_value("HD Customer", customer, "language")
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def translate_inbound(
+    ticket_id,
+    original_text,
+    translated_text=None,
+    target_language="sv",
+    provider=None,
+    model_version=None,
+    idempotency_key=None,
+):
+    """Record the Swedish translation of a message a customer sent us."""
+    return record_translation(
+        ticket_id=ticket_id,
+        original_text=original_text,
+        translated_text=translated_text,
+        target_language=target_language,
+        direction="Inbound",
+        provider=provider,
+        model_version=model_version,
+        idempotency_key=idempotency_key,
+    )
