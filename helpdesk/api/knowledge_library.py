@@ -1,6 +1,6 @@
 import frappe
 from frappe import _
-from frappe.utils import cint
+from frappe.utils import cint, now_datetime
 
 from helpdesk.utils import agent_only, is_admin
 
@@ -18,8 +18,9 @@ def search_knowledge(query, limit=5):
     like = f"%{query}%"
     return frappe.get_all(
         "HD Article",
+        filters={"ai_approved": 1},
         or_filters={"title": ["like", like], "content": ["like", like]},
-        fields=["name", "title", "content", "category"],
+        fields=["name", "title", "content", "category", "version", "ai_approved_version"],
         order_by="modified desc",
         limit_page_length=cint(limit) or 5,
     )
@@ -46,5 +47,18 @@ def upsert_knowledge_article(title, content, category=None, article=None):
     doc.content = content
     if category:
         doc.category = category
+    doc.save(ignore_permissions=True)
+    return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def approve_knowledge_article(article):
+    """Approve the current version of an article for use in AI replies."""
+    _require_knowledge_admin()
+    doc = frappe.get_doc("HD Article", article)
+    doc.ai_approved = 1
+    doc.ai_approved_by = frappe.session.user
+    doc.ai_approved_on = now_datetime()
     doc.save(ignore_permissions=True)
     return doc.as_dict()

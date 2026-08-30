@@ -12,6 +12,10 @@
   "published_on",
   "views",
   "version",
+  "ai_approved",
+  "ai_approved_version",
+  "ai_approved_by",
+  "ai_approved_on",
   "column_break_7",
   "category",
   "author",
@@ -92,6 +96,31 @@
    "fieldname": "version",
    "fieldtype": "Int",
    "label": "Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ai_approved",
+   "fieldtype": "Check",
+   "label": "AI Approved",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ai_approved_version",
+   "fieldtype": "Int",
+   "label": "AI Approved Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ai_approved_by",
+   "fieldtype": "Link",
+   "label": "AI Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ai_approved_on",
+   "fieldtype": "Datetime",
+   "label": "AI Approved On",
    "read_only": 1
   }
  ],
