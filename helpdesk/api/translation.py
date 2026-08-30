@@ -220,6 +220,7 @@ def translate_outbound(
     target_language: str | None = None,
     provider: str | None = None,
     model_version: str | None = None,
+    prompt_version: str | int | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
     """Record an agent's Swedish reply translated into the customer's language."""
@@ -232,6 +233,50 @@ def translate_outbound(
         direction="Outbound",
         provider=provider,
         model_version=model_version,
+        prompt_version=prompt_version,
+        idempotency_key=idempotency_key,
+    )
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def generate_outbound_translation(
+    ticket_id: str,
+    original_text: str,
+    target_language: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
+    """Translate an agent's Swedish reply into the language the customer reads.
+
+    Which language that is has to be known rather than guessed: answering in
+    the wrong one is a worse failure than not translating at all, so an unknown
+    customer language stops the generation instead of picking a likely one.
+
+    The result is recorded as any other outbound translation, which means an
+    agent still reviews it before the customer sees it.
+
+    A language the company has not enabled is refused before the engine is
+    asked, and a key that already produced a translation returns it unchanged.
+    """
+    frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+    stored = ai_generation.replayed("HD Message Translation", idempotency_key)
+    if stored:
+        return frappe.get_doc("HD Message Translation", stored).as_dict()
+    target_language = target_language or _ticket_customer_language(ticket_id)
+    if not target_language:
+        frappe.throw(
+            _("The language this customer reads is not known, so this reply cannot be translated.")
+        )
+    _validate_supported_language(target_language)
+    text, generation = _generated_translation(original_text, "sv", target_language)
+    return translate_outbound(
+        ticket_id=ticket_id,
+        original_text=original_text,
+        translated_text=text,
+        target_language=target_language,
+        provider=generation["provider"],
+        model_version=generation["model_version"],
+        prompt_version=generation["prompt_version"],
         idempotency_key=idempotency_key,
     )
 
