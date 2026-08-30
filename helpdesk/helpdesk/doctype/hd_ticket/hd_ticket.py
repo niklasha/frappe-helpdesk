@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 from email.utils import parseaddr
 
@@ -81,8 +82,45 @@ class HDTicket(Document):
         if existing:
             frappe.throw(_("A ticket already exists for this mail thread: {0}").format(existing))
 
+    def set_thread_signals(self):
+        """Persist lightweight thread and duplicate signals for later review."""
+        if not self.raised_by or not self.subject:
+            return
+        existing = frappe.db.get_all(
+            "HD Ticket",
+            filters={"raised_by": self.raised_by, "name": ["!=", self.name or ""]},
+            fields=["subject"],
+            limit_page_length=20,
+        )
+        if not existing:
+            return
+        subject_words = self._subject_words(self.subject)
+        if "order" in subject_words and any(
+            "order" in self._subject_words(row.subject) for row in existing
+        ):
+            self.new_order_from_old_thread = 1
+        best_score = 0
+        for row in existing:
+            words = self._subject_words(row.subject)
+            if words:
+                overlap = len(subject_words & words)
+                best_score = max(
+                    best_score,
+                    int(100 * overlap / max(len(subject_words), len(words))),
+                )
+        self.duplicate_score = best_score
+
+    @staticmethod
+    def _subject_words(subject):
+        return {
+            word
+            for word in re.findall(r"[a-z0-9]+", (subject or "").lower())
+            if len(word) > 2
+        }
+
     def before_validate(self):
         self.check_update_perms()
+        self.set_thread_signals()
         self.set_classification_model()
         self.set_production_option()
         self.set_workflow_identifier()
