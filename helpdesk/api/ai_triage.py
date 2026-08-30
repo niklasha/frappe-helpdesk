@@ -149,13 +149,18 @@ def triage_ticket(
     )
     if confidence_threshold is None:
         confidence_threshold = DEFAULT_CONFIDENCE_THRESHOLD
-    return record_triage(
+    generation = ai_generation.provenance(response, prompt_version)
+    result = record_triage(
         ticket_id=ticket_id,
         idempotency_key=idempotency_key,
         confidence_threshold=confidence_threshold,
-        **ai_generation.provenance(response, prompt_version),
+        **generation,
         **proposal,
     )
+    ai_generation.attribute(
+        "triaged a ticket", "HD AI Triage Result", result["name"], generation
+    )
+    return result
 
 
 @frappe.whitelist(methods=["POST"])

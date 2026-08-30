@@ -16,7 +16,7 @@ import frappe
 from frappe import _
 from frappe.utils import strip_html
 
-from helpdesk.api import ai_engine, ai_runner
+from helpdesk.api import ai_engine, ai_runner, governance
 
 FENCE = "```"
 
@@ -182,6 +182,24 @@ def _stated(value: object) -> bool:
     if isinstance(value, (dict, list, tuple, set)):
         return bool(value)
     return True
+
+
+def attribute(
+    action: str, reference_doctype: str, reference_name: str, generation: dict
+) -> dict:
+    """Log that the AI, not the agent who asked, produced one record.
+
+    The agent's session ran the generation, so without this the audit log would
+    show a person authoring text they only requested. The provenance travels
+    with the event, which is what makes a result traceable back to the prompt
+    and model version that wrote it.
+    """
+    return governance.log_ai_event(
+        action,
+        reference_doctype=reference_doctype,
+        reference_name=reference_name,
+        details=generation,
+    )
 
 
 def generate_text(

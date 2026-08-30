@@ -190,7 +190,7 @@ def draft_knowledge_reply(
         if engine
         else _extracted_reply(knowledge)
     )
-    return record_reply_draft(
+    draft = record_reply_draft(
         ticket_id=ticket_id,
         body=reply["body"],
         question=question,
@@ -203,6 +203,18 @@ def draft_knowledge_reply(
         prompt_version=reply["prompt_version"],
         idempotency_key=idempotency_key,
     )
+    if reply["provider"]:
+        ai_generation.attribute(
+            "drafted a reply from the knowledge library",
+            "HD AI Reply Draft",
+            draft["name"],
+            {
+                "provider": reply["provider"],
+                "model_version": reply["model_version"],
+                "prompt_version": reply["prompt_version"],
+            },
+        )
+    return draft
 
 
 @frappe.whitelist()
@@ -319,15 +331,23 @@ def generate_completion_request(
     body, response = ai_generation.generate_text(
         engine, instructions, ", ".join(missing), COMPLETION_REQUEST_HINT
     )
-    return record_reply_draft(
+    generation = ai_generation.provenance(response, prompt_version)
+    draft = record_reply_draft(
         ticket_id=extraction.ticket,
         body=body,
         question_type=GENERATED_COMPLETION_REQUEST,
         sources=[],
         confidence=0,
         idempotency_key=idempotency_key,
-        **ai_generation.provenance(response, prompt_version),
+        **generation,
     )
+    ai_generation.attribute(
+        "wrote a completion request",
+        "HD AI Reply Draft",
+        draft["name"],
+        generation,
+    )
+    return draft
 
 
 @frappe.whitelist(methods=["POST"])

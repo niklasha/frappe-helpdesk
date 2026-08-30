@@ -66,10 +66,10 @@ def extract_order(ticket_id: str, idempotency_key: str | None = None) -> dict:
     if stored:
         return frappe.get_doc("HD Order Extraction", stored).as_dict()
     engine = ai_generation.engine_or_throw()
-    instructions, _prompt_version = ai_generation._prompt(
+    instructions, prompt_version = ai_generation._prompt(
         ai_generation.ORDER_EXTRACTION
     )
-    answer, _response = ai_generation.generate_json(
+    answer, response = ai_generation.generate_json(
         engine,
         instructions,
         ai_generation.ticket_text(ticket_id),
@@ -77,9 +77,17 @@ def extract_order(ticket_id: str, idempotency_key: str | None = None) -> dict:
         EXTRACTION_FIELDS,
     )
     details = {field: answer[field] for field in EXTRACTION_FIELDS if field in answer}
-    return record_extraction(
-        ticket_id=ticket_id, idempotency_key=idempotency_key, **details
+    generation = ai_generation.provenance(response, prompt_version)
+    result = record_extraction(
+        ticket_id=ticket_id,
+        idempotency_key=idempotency_key,
+        **generation,
+        **details,
     )
+    ai_generation.attribute(
+        "extracted an order", "HD Order Extraction", result["name"], generation
+    )
+    return result
 
 
 @frappe.whitelist(methods=["POST"])
