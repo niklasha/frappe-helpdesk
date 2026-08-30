@@ -1,0 +1,9 @@
+{
+ "actions": [], "autoname": "hash", "creation": "2026-08-30 00:00:00.000000", "doctype": "DocType", "engine": "InnoDB",
+ "field_order": ["actor", "action", "reference_doctype", "reference_name", "details", "occurred_on", "performed_by"],
+ "fields": [
+  {"default":"Automation","fieldname":"actor","fieldtype":"Select","label":"Actor","options":"Automation\nAI\nUser"}, {"fieldname":"action","fieldtype":"Data","label":"Action","reqd":1}, {"fieldname":"reference_doctype","fieldtype":"Data","label":"Reference Doctype"}, {"fieldname":"reference_name","fieldtype":"Data","label":"Reference Name"}, {"fieldname":"details","fieldtype":"Long Text","label":"Details"}, {"fieldname":"occurred_on","fieldtype":"Datetime","label":"Occurred On"}, {"fieldname":"performed_by","fieldtype":"Link","label":"Performed By","options":"User"}
+ ],
+ "links": [], "modified": "2026-08-30 00:00:00.000000", "modified_by": "Administrator", "module": "Helpdesk", "name": "HD Automation Event", "owner": "Administrator",
+ "permissions": [{"create":1,"delete":1,"read":1,"role":"System Manager","write":1},{"create":1,"read":1,"role":"Agent","write":1}], "sort_field":"modified", "sort_order":"DESC", "states":[], "track_changes":1
+}

@@ -136,6 +136,7 @@ ignore_links_on_delete = [
     "HD Customer External Record",
     "HD Call Record",
     "HD Chat Conversation",
+    "HD Automation Event",
 ]
 
 # setup wizard
