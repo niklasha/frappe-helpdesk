@@ -50,7 +50,7 @@ def _newest_first(rows):
 
 @frappe.whitelist()
 @agent_only
-def search_tickets_by_reference(reference, kind=None):
+def search_tickets_by_reference(reference: str, kind: str | None = None) -> list:
     """Find tickets whose external references match, e.g. an order number."""
     if not reference:
         return []
@@ -59,7 +59,7 @@ def search_tickets_by_reference(reference, kind=None):
 
 @frappe.whitelist()
 @agent_only
-def search_tickets_by_correction(reference):
+def search_tickets_by_correction(reference: str) -> list:
     """Find tickets whose correction number matches the reference."""
     if not reference:
         return []
@@ -105,7 +105,7 @@ def _without_duplicate_tickets(rows):
 
 @frappe.whitelist()
 @agent_only
-def search_tickets_by_article(reference):
+def search_tickets_by_article(reference: str) -> list:
     """Find tickets by article number, in links and in extracted orders."""
     if not reference:
         return []
@@ -115,7 +115,7 @@ def search_tickets_by_article(reference):
 
 @frappe.whitelist()
 @agent_only
-def search_tickets_by_file(filename):
+def search_tickets_by_file(filename: str) -> list:
     """Find tickets by the name of a file attached to them."""
     if not filename:
         return []
