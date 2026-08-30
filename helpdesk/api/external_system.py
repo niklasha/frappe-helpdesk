@@ -134,3 +134,10 @@ def customer_history(customer, record_type=None):
         ],
         order_by="occurred_on desc, creation desc",
     )
+
+
+@frappe.whitelist()
+@agent_only
+def customer_proofs(customer):
+    """Return the proofs a customer has seen before, newest first."""
+    return customer_history(customer, record_type="Proof")
