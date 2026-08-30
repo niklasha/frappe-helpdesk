@@ -4,11 +4,18 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, now_datetime, strip_html
 
-from helpdesk.api import ai_engine, ai_runner
+from helpdesk.api import ai_engine, ai_generation, ai_runner
 from helpdesk.api.knowledge_library import search_knowledge
 from helpdesk.utils import agent_only
 
 KNOWLEDGE_REPLY_PROMPT_NAME = "knowledge_reply"
+
+COMPLETION_REQUEST_HINT = (
+    "Write the reply in Swedish, and ask only for the fields listed below. "
+    "Name each one in wording the customer will recognise."
+)
+
+GENERATED_COMPLETION_REQUEST = "generated_completion_request"
 
 KNOWLEDGE_REPLY_INSTRUCTIONS = (
     "Answer the customer question using only the approved knowledge below. "
@@ -273,18 +280,63 @@ def answer_common_question(
     )
 
 
-@frappe.whitelist(methods=["POST"])
-@agent_only
-def draft_completion_request(
-    extraction_id: str, idempotency_key: str | None = None
-) -> dict:
-    """Draft the reply that asks a customer for the order details still missing."""
+def _missing_order_fields(extraction_id):
+    """Return what one extraction still lacks, refusing an order that lacks nothing."""
     extraction = frappe.get_doc("HD Order Extraction", extraction_id)
     missing = extraction.missing_fields
     if isinstance(missing, str):
         missing = json.loads(missing or "[]")
     if not missing:
         frappe.throw(_("This order is not missing any information."))
+    return extraction, missing
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def generate_completion_request(
+    extraction_id: str, idempotency_key: str | None = None
+) -> dict:
+    """Have the AI engine write the reply asking for the missing order details.
+
+    Only the fields the extraction actually lacks are shown to the engine, so
+    the customer is asked for what is missing and nothing more. The fixed
+    wording of `draft_completion_request` stays available for a helpdesk that
+    runs without an engine.
+
+    Free-form engine output is its own question type. An administrator who
+    released the fixed wording for auto-sending released wording they have
+    read; releasing whatever the model writes next is a separate decision, and
+    the generation reports no confidence of its own to weigh against a policy.
+    """
+    stored = ai_generation.replayed("HD AI Reply Draft", idempotency_key)
+    if stored:
+        return frappe.get_doc("HD AI Reply Draft", stored).as_dict()
+    extraction, missing = _missing_order_fields(extraction_id)
+    engine = ai_generation.engine_or_throw()
+    instructions, prompt_version = ai_generation._prompt(
+        ai_generation.COMPLETION_REQUEST
+    )
+    body, response = ai_generation.generate_text(
+        engine, instructions, ", ".join(missing), COMPLETION_REQUEST_HINT
+    )
+    return record_reply_draft(
+        ticket_id=extraction.ticket,
+        body=body,
+        question_type=GENERATED_COMPLETION_REQUEST,
+        sources=[],
+        confidence=0,
+        idempotency_key=idempotency_key,
+        **ai_generation.provenance(response, prompt_version),
+    )
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def draft_completion_request(
+    extraction_id: str, idempotency_key: str | None = None
+) -> dict:
+    """Draft the reply that asks a customer for the order details still missing."""
+    extraction, missing = _missing_order_fields(extraction_id)
     return record_reply_draft(
         ticket_id=extraction.ticket,
         body=_("To continue with your order we still need: {0}").format(
