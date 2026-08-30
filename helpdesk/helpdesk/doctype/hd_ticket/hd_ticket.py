@@ -471,6 +471,16 @@ class HDTicket(Document):
         if self.priority:
             return
         subject = (self.subject or "").lower()
+        for rule in frappe.db.get_all(
+            "HD Ticket Priority Rule",
+            filters={"enabled": 1},
+            fields=["keywords", "priority"],
+            order_by="rule_order asc, modified asc",
+        ):
+            keywords = [word.strip().lower() for word in (rule.keywords or "").replace("\n", ",").split(",") if word.strip()]
+            if any(keyword in subject for keyword in keywords):
+                self.priority = rule.priority
+                return
         if "dex" in subject:
             self.priority = frappe.db.get_value("HD Ticket Priority", {"level": "Urgent"}, "name")
             if self.priority:
