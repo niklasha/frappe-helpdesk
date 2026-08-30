@@ -14,6 +14,7 @@ class HDArticle(Document):
         self.validate_article_category()
         self.validate_published_content()
         self.version_edited_content()
+        self.maintain_ai_approval()
 
     def version_edited_content(self):
         """Give every edit of an article its own version number.
@@ -27,6 +28,26 @@ class HDArticle(Document):
         )
         if self.is_new() or edited or not cint(self.version):
             self.version = cint(self.version) + 1
+
+    def maintain_ai_approval(self):
+        """Approval belongs to the exact text that earned it.
+
+        Editing an approved article withdraws its approval, and an approval
+        always records the version it was granted for, whichever code path
+        saved the article.
+        """
+        before = None if self.is_new() else self.get_doc_before_save()
+        was_approved = bool(before and before.ai_approved)
+        if was_approved and (
+            before.title != self.title or before.content != self.content
+        ):
+            self.ai_approved = 0
+        if self.ai_approved:
+            self.ai_approved_version = cint(self.version)
+        else:
+            self.ai_approved_version = 0
+            self.ai_approved_by = None
+            self.ai_approved_on = None
 
     def on_update(self):
         self.snapshot_version()
