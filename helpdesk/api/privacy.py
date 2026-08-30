@@ -131,3 +131,38 @@ def ai_processing_declarations():
         fields=["name", "provider", *DECLARATION_FIELDS],
         order_by="provider asc",
     )
+
+
+def has_ai_training_consent(customer):
+    """Whether a customer has explicitly consented to training use of their data."""
+    if not customer:
+        return False
+    return bool(
+        cint(frappe.db.get_value("HD Customer", customer, "ai_training_consent"))
+    )
+
+
+@frappe.whitelist()
+@agent_only
+def ai_training_allowed(customer):
+    """Report the consent decision as a boolean.
+
+    Silence must never be read as permission, so the answer is a real boolean:
+    a caller that treats the response as a truth value reads a refusal as a
+    refusal, which a string such as "false" would not convey.
+    """
+    return has_ai_training_consent(customer)
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def set_ai_training_consent(customer, consent):
+    """Record a customer's decision about training use, and log who took it."""
+    frappe.has_permission("HD Customer", "write", doc=customer, throw=True)
+    doc = frappe.get_doc("HD Customer", customer)
+    doc.ai_training_consent = cint(consent)
+    doc.save(ignore_permissions=True)
+    frappe.logger("helpdesk").info(
+        f"AI training consent for {customer} set to {doc.ai_training_consent} by {frappe.session.user}"
+    )
+    return doc.as_dict()
