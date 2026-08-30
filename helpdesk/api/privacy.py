@@ -95,3 +95,39 @@ def anonymize_contact(email):
         f"Anonymized {len(tickets)} tickets as {placeholder} by {frappe.session.user}"
     )
     return len(tickets)
+
+
+DECLARATION_FIELDS = ("purpose", "data_categories", "agreement_reference", "hosting_region")
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def declare_ai_processing(provider, **values):
+    """Record how an external AI provider processes personal data for us."""
+    existing = frappe.db.exists("HD AI Processing Declaration", provider)
+    doc = (
+        frappe.get_doc("HD AI Processing Declaration", existing)
+        if existing
+        else frappe.get_doc(
+            {"doctype": "HD AI Processing Declaration", "provider": provider}
+        )
+    )
+    for field in DECLARATION_FIELDS:
+        if values.get(field) is not None:
+            doc.set(field, values[field])
+    if existing:
+        doc.save(ignore_permissions=True)
+    else:
+        doc.insert(ignore_permissions=True)
+    return doc.as_dict()
+
+
+@frappe.whitelist()
+@agent_only
+def ai_processing_declarations():
+    """Return every declared external AI processing arrangement."""
+    return frappe.get_all(
+        "HD AI Processing Declaration",
+        fields=["name", "provider", *DECLARATION_FIELDS],
+        order_by="provider asc",
+    )
