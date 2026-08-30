@@ -84,3 +84,36 @@ def upsert_mcp_server(
         doc.enabled = cint(enabled)
     doc.save(ignore_permissions=True)
     return doc.as_dict()
+
+
+def _arguments(value):
+    """Read a stored argument list back as the list a process is spawned with."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return []
+    return value if isinstance(value, list) else []
+
+
+@frappe.whitelist()
+@agent_only
+def mcp_dispatch_config() -> list:
+    """Export the stdio spawn configuration of every enabled MCP server.
+
+    One entry per server, shaped like `raphain_mcp::SpawnOptions` so a runner
+    can hand it straight to `McpStdioDispatcher::spawn_with`.
+    """
+    return [
+        {
+            "name": server.server_name,
+            "command": server.command,
+            "args": _arguments(server.arguments),
+            "protocol_version": server.protocol_version,
+            "handshake_timeout": cint(server.handshake_timeout),
+            "call_timeout": cint(server.call_timeout),
+        }
+        for server in list_mcp_servers()
+    ]
