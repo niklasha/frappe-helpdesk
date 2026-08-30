@@ -8,6 +8,22 @@ from helpdesk.api.knowledge_library import search_knowledge
 from helpdesk.utils import agent_only
 
 
+def _apply_auto_reply_policy(doc):
+    """Only question types an administrator released may skip human approval."""
+    if not doc.question_type:
+        return
+    policy = frappe.db.get_value(
+        "HD AI Reply Policy",
+        {"question_type": doc.question_type, "enabled": 1, "auto_send": 1},
+        ["minimum_confidence"],
+        as_dict=True,
+    )
+    if not policy or flt(doc.confidence) < flt(policy.minimum_confidence):
+        return
+    doc.requires_approval = 0
+    doc.status = "Approved"
+
+
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def record_reply_draft(
@@ -51,6 +67,7 @@ def record_reply_draft(
             "idempotency_key": idempotency_key,
         }
     )
+    _apply_auto_reply_policy(doc)
     doc.insert(ignore_permissions=True)
     return doc.as_dict()
 
