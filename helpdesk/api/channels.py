@@ -1,7 +1,7 @@
 import frappe
 from frappe import _
 
-from helpdesk.utils import agent_only
+from helpdesk.utils import agent_only, get_customers
 
 CALL_VALUE_FIELDS = (
     "provider",
@@ -22,6 +22,17 @@ def _get_call(external_call_id):
     if not name:
         frappe.throw(_("No call is recorded for {0}.").format(external_call_id))
     return frappe.get_doc("HD Call Record", name)
+
+
+def _find_contact(number):
+    """Find the contact whose telephone or mobile number is the given number."""
+    if not number:
+        return None
+    for fieldname in ("phone", "mobile_no"):
+        name = frappe.db.get_value("Contact", {fieldname: number}, "name")
+        if name:
+            return name
+    return None
 
 
 @frappe.whitelist()
@@ -90,5 +101,21 @@ def create_ticket_from_call(external_call_id, subject=None, ticket=None):
         created.insert(ignore_permissions=True)
         ticket = created.name
     doc.ticket = ticket
+    doc.save(ignore_permissions=True)
+    return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def match_call_customer(external_call_id):
+    """Match a call to the contact and the customer its calling number belongs to."""
+    doc = _get_call(external_call_id)
+    contact = _find_contact(doc.from_number)
+    if not contact:
+        return doc.as_dict()
+    doc.contact = contact
+    customers = get_customers(contact=contact)
+    if customers:
+        doc.customer = customers[0]
     doc.save(ignore_permissions=True)
     return doc.as_dict()
