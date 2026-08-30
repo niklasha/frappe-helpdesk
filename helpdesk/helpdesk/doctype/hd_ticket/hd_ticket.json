@@ -15,6 +15,8 @@
   "status",
   "priority",
   "status_category",
+  "waiting_for",
+  "waiting_reason",
   "cb00",
   "ticket_type",
   "classification_model",
@@ -126,6 +128,17 @@
   {
    "fieldname": "cb00",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "waiting_for",
+   "fieldtype": "Select",
+   "label": "Waiting For",
+   "options": "Customer\nInternal\nExternal"
+  },
+  {
+   "fieldname": "waiting_reason",
+   "fieldtype": "Small Text",
+   "label": "Waiting Reason"
   },
   {
    "fieldname": "ticket_type",
