@@ -278,3 +278,17 @@ def submit_on_proof_approval(ticket_id, proof_reference, extraction_id=None):
         )
     _ensure_external_link(ticket_id, "proof", proof_reference, _("Approved proof"))
     return submit_order(extraction_id=extraction_id, automated=1)
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def submit_repeat_order(extraction_id):
+    """Submit a repeat order without an agent having to look at it.
+
+    Only an extraction that was recognised as a repeat of an earlier order may
+    go this way; anything else stays with a person.
+    """
+    extraction = frappe.get_doc("HD Order Extraction", extraction_id)
+    if not extraction.repeat_order:
+        frappe.throw(_("Order extraction {0} is not a repeat order.").format(extraction_id))
+    return submit_order(extraction_id=extraction_id, automated=1)
