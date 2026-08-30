@@ -385,6 +385,16 @@ class HDTicket(Document):
         if self.classification_model and not self.is_new():
             return
         subject = (self.subject or "").lower()
+        for rule in frappe.db.get_all(
+            "HD Ticket Classification Rule",
+            filters={"enabled": 1},
+            fields=["keywords", "classification"],
+            order_by="rule_order asc, modified asc",
+        ):
+            keywords = [word.strip().lower() for word in (rule.keywords or "").replace("\n", ",").split(",") if word.strip()]
+            if any(keyword in subject for keyword in keywords):
+                self.classification_model = rule.classification
+                return
         classifications = (
             (("order", "beställ", "bestall"), "Order"),
             (("reklamation", "complaint"), "Reklamation"),
