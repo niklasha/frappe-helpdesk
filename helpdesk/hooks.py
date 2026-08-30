@@ -131,6 +131,7 @@ ignore_links_on_delete = [
     "HD Notification",
     "HD Ticket Comment",
     "HD Article Revision",
+    "HD External Order Submission",
 ]
 
 # setup wizard

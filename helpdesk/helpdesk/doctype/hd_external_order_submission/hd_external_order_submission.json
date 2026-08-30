@@ -1,0 +1,34 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-30 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["ticket", "extraction", "status", "external_order_id", "attempts", "last_error", "automated", "submitted_by", "submitted_on", "idempotency_key"],
+ "fields": [
+  {"fieldname": "ticket", "fieldtype": "Link", "in_list_view": 1, "label": "Ticket", "options": "HD Ticket", "reqd": 1},
+  {"fieldname": "extraction", "fieldtype": "Link", "label": "Extraction", "options": "HD Order Extraction"},
+  {"default": "Pending", "fieldname": "status", "fieldtype": "Select", "in_list_view": 1, "label": "Status", "options": "Pending\nSubmitted\nFailed\nNeeds Manual Handling"},
+  {"fieldname": "external_order_id", "fieldtype": "Data", "in_list_view": 1, "label": "External Order ID"},
+  {"fieldname": "attempts", "fieldtype": "Int", "label": "Attempts"},
+  {"fieldname": "last_error", "fieldtype": "Small Text", "label": "Last Error"},
+  {"fieldname": "automated", "fieldtype": "Check", "label": "Automated"},
+  {"fieldname": "submitted_by", "fieldtype": "Link", "label": "Submitted By", "options": "User"},
+  {"fieldname": "submitted_on", "fieldtype": "Datetime", "label": "Submitted On"},
+  {"fieldname": "idempotency_key", "fieldtype": "Data", "label": "Idempotency Key", "unique": 1}
+ ],
+ "links": [],
+ "modified": "2026-08-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Helpdesk",
+ "name": "HD External Order Submission",
+ "owner": "Administrator",
+ "permissions": [
+  {"create": 1, "delete": 1, "read": 1, "role": "System Manager", "write": 1},
+  {"create": 1, "read": 1, "role": "Agent", "write": 1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
