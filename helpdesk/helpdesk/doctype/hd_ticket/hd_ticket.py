@@ -70,7 +70,16 @@ class HDTicket(Document):
         return self.name
 
     def before_insert(self):
+        self.reject_duplicate_thread()
         self.generate_key()
+
+    def reject_duplicate_thread(self):
+        """Reject an identical inbound thread instead of creating a duplicate ticket."""
+        if not self.get("message_id") or not self.raised_by or not self.subject:
+            return
+        existing = frappe.db.exists("HD Ticket", {"raised_by": self.raised_by, "subject": self.subject})
+        if existing:
+            frappe.throw(_("A ticket already exists for this mail thread: {0}").format(existing))
 
     def before_validate(self):
         self.check_update_perms()
