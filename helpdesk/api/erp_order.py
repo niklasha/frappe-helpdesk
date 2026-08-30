@@ -121,6 +121,20 @@ def link_order_relationships(ticket_id, links):
     )
 
 
+def _open_submission(extraction_id):
+    """Return the submission that already owns this extraction, if any.
+
+    A submission that is ``Pending`` or ``Submitted`` still stands for the one
+    order the extraction may become, so no second one may be created for it.
+    """
+    name = frappe.db.get_value(
+        "HD External Order Submission",
+        {"extraction": extraction_id, "status": ("in", ("Pending", "Submitted"))},
+        "name",
+    )
+    return frappe.get_doc("HD External Order Submission", name).as_dict() if name else None
+
+
 def _external_order_id(result):
     """Read the external order identifier out of whatever a connector returns."""
     if isinstance(result, dict):
@@ -137,10 +151,15 @@ def submit_order(extraction_id, idempotency_key=None, automated=0):
     intent and remains provider-neutral until an ERP integration is installed.
     A connector that raises is a refused order like any other: the reason is
     recorded on the submission instead of escaping to the caller.
+    An extraction that is already on its way to the external system is returned
+    as it stands, so the same order is never created twice.
     """
     extraction = frappe.get_doc("HD Order Extraction", extraction_id)
     if not extraction.ready_for_connector:
         frappe.throw(_("Order extraction {0} is not ready for the external system.").format(extraction_id))
+    open_submission = _open_submission(extraction.name)
+    if open_submission:
+        return open_submission
     submission = record_submission(
         ticket_id=extraction.ticket,
         extraction=extraction.name,
