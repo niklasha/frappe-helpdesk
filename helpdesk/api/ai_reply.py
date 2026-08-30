@@ -114,18 +114,18 @@ def _apply_auto_reply_policy(doc):
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def record_reply_draft(
-    ticket_id,
-    body,
-    question=None,
-    question_type=None,
-    language=None,
-    sources=None,
-    confidence=0,
-    provider=None,
-    model_version=None,
-    prompt_version=None,
-    idempotency_key=None,
-):
+    ticket_id: str,
+    body: str,
+    question: str | None = None,
+    question_type: str | None = None,
+    language: str | None = None,
+    sources: dict | list | str | None = None,
+    confidence: float | int | None = 0,
+    provider: str | None = None,
+    model_version: str | None = None,
+    prompt_version: str | int | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
     """Persist a proposed customer reply for human review, replayable by key."""
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     if idempotency_key:
@@ -162,14 +162,14 @@ def record_reply_draft(
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def draft_knowledge_reply(
-    ticket_id,
-    question,
-    question_type=None,
-    category=None,
-    language=None,
-    idempotency_key=None,
-    limit=3,
-):
+    ticket_id: str,
+    question: str,
+    question_type: str | None = None,
+    category: str | None = None,
+    language: str | None = None,
+    idempotency_key: str | None = None,
+    limit: int = 3,
+) -> dict:
     """Draft a reply grounded in the approved knowledge library."""
     articles = search_knowledge(question, limit=limit, category=category)
     sources, knowledge = _approved_knowledge(articles)
@@ -200,7 +200,7 @@ def draft_knowledge_reply(
 
 @frappe.whitelist()
 @agent_only
-def get_reply_sources(draft_id):
+def get_reply_sources(draft_id: str) -> list:
     """Return the knowledge a draft was based on, flagging superseded versions."""
     doc = frappe.get_doc("HD AI Reply Draft", draft_id)
     sources = doc.sources or []
@@ -232,7 +232,7 @@ def get_reply_sources(draft_id):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def approve_reply_draft(draft_id):
+def approve_reply_draft(draft_id: str) -> dict:
     """Record the human approval a drafted reply needs before it is sent."""
     doc = frappe.get_doc("HD AI Reply Draft", draft_id)
     doc.status = "Approved"
@@ -244,7 +244,7 @@ def approve_reply_draft(draft_id):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def send_reply_draft(draft_id):
+def send_reply_draft(draft_id: str) -> dict:
     """Send an approved draft; an unapproved draft must never reach the customer."""
     doc = frappe.get_doc("HD AI Reply Draft", draft_id)
     if doc.status != "Approved":
@@ -257,7 +257,12 @@ def send_reply_draft(draft_id):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def answer_common_question(ticket_id, question, category=None, idempotency_key=None):
+def answer_common_question(
+    ticket_id: str,
+    question: str,
+    category: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict:
     """Answer a recurring question such as delivery times or product facts."""
     return draft_knowledge_reply(
         ticket_id=ticket_id,
@@ -270,7 +275,9 @@ def answer_common_question(ticket_id, question, category=None, idempotency_key=N
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def draft_completion_request(extraction_id, idempotency_key=None):
+def draft_completion_request(
+    extraction_id: str, idempotency_key: str | None = None
+) -> dict:
     """Draft the reply that asks a customer for the order details still missing."""
     extraction = frappe.get_doc("HD Order Extraction", extraction_id)
     missing = extraction.missing_fields
