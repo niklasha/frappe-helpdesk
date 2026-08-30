@@ -69,3 +69,26 @@ def record_call_transcript(external_call_id, transcript):
     doc.transcript = transcript
     doc.save(ignore_permissions=True)
     return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def create_ticket_from_call(external_call_id, subject=None, ticket=None):
+    """Turn a call into a ticket, keeping the ticket a call was already given."""
+    doc = _get_call(external_call_id)
+    if doc.ticket:
+        return doc.as_dict()
+    if not ticket:
+        created = frappe.get_doc(
+            {
+                "doctype": "HD Ticket",
+                "subject": subject
+                or _("Call from {0}").format(doc.from_number or doc.external_call_id),
+                "description": doc.transcript or "",
+            }
+        )
+        created.insert(ignore_permissions=True)
+        ticket = created.name
+    doc.ticket = ticket
+    doc.save(ignore_permissions=True)
+    return doc.as_dict()
