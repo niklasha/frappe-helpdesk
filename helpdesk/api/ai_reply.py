@@ -1,7 +1,7 @@
 import json
 
 import frappe
-from frappe.utils import flt, strip_html
+from frappe.utils import cint, flt, strip_html
 
 from helpdesk.api.knowledge_library import search_knowledge
 from helpdesk.utils import agent_only
@@ -85,3 +85,35 @@ def draft_knowledge_reply(
         confidence=1 if sources else 0,
         idempotency_key=idempotency_key,
     )
+
+
+@frappe.whitelist()
+@agent_only
+def get_reply_sources(draft_id):
+    """Return the knowledge a draft was based on, flagging superseded versions."""
+    doc = frappe.get_doc("HD AI Reply Draft", draft_id)
+    sources = doc.sources or []
+    if isinstance(sources, str):
+        sources = json.loads(sources or "[]")
+    resolved = []
+    for source in sources:
+        current = (
+            frappe.db.get_value(
+                "HD Article",
+                source.get("article"),
+                ["title", "ai_approved_version"],
+                as_dict=True,
+            )
+            or {}
+        )
+        resolved.append(
+            {
+                "article": source.get("article"),
+                "title": current.get("title") or source.get("title"),
+                "cited_version": source.get("version"),
+                "current_version": current.get("ai_approved_version"),
+                "stale": cint(source.get("version"))
+                != cint(current.get("ai_approved_version")),
+            }
+        )
+    return resolved
