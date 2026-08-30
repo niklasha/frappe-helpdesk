@@ -56,7 +56,7 @@ def _find_contact(number):
 
 @frappe.whitelist()
 @agent_only
-def telephony_settings():
+def telephony_settings() -> list:
     """Return the configured telephony systems, so a PBX is set up rather than coded in."""
     return frappe.get_all(
         "HD External System",
@@ -68,7 +68,7 @@ def telephony_settings():
 
 @frappe.whitelist()
 @agent_only
-def chat_widget_settings():
+def chat_widget_settings() -> dict:
     """Return the website chat widget configuration held by the chat external system."""
     row = frappe.db.get_value(
         "HD External System",
@@ -87,7 +87,9 @@ def chat_widget_settings():
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def record_call(external_call_id, direction="Inbound", **values):
+def record_call(
+    external_call_id: str, direction: str | None = "Inbound", **values
+) -> dict:
     """Persist a call handed over by a telephony system, replayable by its external id."""
     existing = frappe.db.get_value(
         "HD Call Record", {"external_call_id": external_call_id}, "name"
@@ -112,7 +114,7 @@ def record_call(external_call_id, direction="Inbound", **values):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def record_call_transcript(external_call_id, transcript):
+def record_call_transcript(external_call_id: str, transcript: str) -> dict:
     """Store the transcription a telephony system produced for a recorded call."""
     doc = _get_call(external_call_id)
     doc.transcript = transcript
@@ -122,7 +124,9 @@ def record_call_transcript(external_call_id, transcript):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def create_ticket_from_call(external_call_id, subject=None, ticket=None):
+def create_ticket_from_call(
+    external_call_id: str, subject: str | None = None, ticket: str | None = None
+) -> dict:
     """Turn a call into a ticket, keeping the ticket a call was already given."""
     doc = _get_call(external_call_id)
     if doc.ticket:
@@ -145,7 +149,7 @@ def create_ticket_from_call(external_call_id, subject=None, ticket=None):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def match_call_customer(external_call_id):
+def match_call_customer(external_call_id: str) -> dict:
     """Match a call to the contact and the customer its calling number belongs to."""
     doc = _get_call(external_call_id)
     contact = _find_contact(doc.from_number)
@@ -162,8 +166,11 @@ def match_call_customer(external_call_id):
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def record_chat(
-    external_conversation_id, visitor=None, visitor_email=None, transcript=None
-):
+    external_conversation_id: str,
+    visitor: str | None = None,
+    visitor_email: str | None = None,
+    transcript: str | None = None,
+) -> dict:
     """Persist a website chat conversation, replayable by its external id."""
     existing = frappe.db.get_value(
         "HD Chat Conversation",
@@ -188,7 +195,9 @@ def record_chat(
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def create_ticket_from_chat(external_conversation_id, subject=None):
+def create_ticket_from_chat(
+    external_conversation_id: str, subject: str | None = None
+) -> dict:
     """Turn a chat conversation into a ticket, keeping the ticket it already has."""
     doc = _get_chat(external_conversation_id)
     if doc.ticket:
