@@ -111,3 +111,34 @@ def search_tickets_by_article(reference):
         return []
     rows = _link_matches(reference, "article") + _extraction_matches(reference)
     return _newest_first(_without_duplicate_tickets(rows))
+
+
+@frappe.whitelist()
+@agent_only
+def search_tickets_by_file(filename):
+    """Find tickets by the name of a file attached to them."""
+    if not filename:
+        return []
+    files = frappe.get_all(
+        "File",
+        filters={
+            "attached_to_doctype": "HD Ticket",
+            "file_name": ["like", f"%{filename}%"],
+        },
+        fields=["attached_to_name", "file_name"],
+        order_by="creation desc",
+    )
+    rows = []
+    for entry in files:
+        ticket = _ticket_row(entry["attached_to_name"])
+        if not ticket:
+            continue
+        rows.append(
+            {
+                "ticket": ticket["name"],
+                "subject": ticket["subject"],
+                "file_name": entry["file_name"],
+                "_creation": ticket["creation"],
+            }
+        )
+    return _newest_first(_without_duplicate_tickets(rows))
