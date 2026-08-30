@@ -3,6 +3,7 @@ import frappe
 from helpdesk.utils import agent_only
 
 CALL_VALUE_FIELDS = (
+    "provider",
     "from_number",
     "to_number",
     "started_on",
@@ -10,6 +11,18 @@ CALL_VALUE_FIELDS = (
     "recording_url",
     "transcript",
 )
+
+
+@frappe.whitelist()
+@agent_only
+def telephony_settings():
+    """Return the configured telephony systems, so a PBX is set up rather than coded in."""
+    return frappe.get_all(
+        "HD External System",
+        filters={"enabled": 1, "system": ["like", "telephony%"]},
+        fields=["name", "system", "label", "link_template"],
+        order_by="system asc",
+    )
 
 
 @frappe.whitelist(methods=["POST"])

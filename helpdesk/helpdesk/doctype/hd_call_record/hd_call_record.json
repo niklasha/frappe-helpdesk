@@ -4,9 +4,10 @@
  "creation": "2026-08-30 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
- "field_order": ["external_call_id", "direction", "from_number", "to_number", "started_on", "duration", "recording_url", "transcript", "ticket", "customer", "contact"],
+ "field_order": ["external_call_id", "provider", "direction", "from_number", "to_number", "started_on", "duration", "recording_url", "transcript", "ticket", "customer", "contact"],
  "fields": [
   {"fieldname": "external_call_id", "fieldtype": "Data", "in_list_view": 1, "label": "External Call ID", "reqd": 1, "unique": 1},
+  {"fieldname": "provider", "fieldtype": "Data", "in_list_view": 1, "label": "Provider"},
   {"fieldname": "direction", "fieldtype": "Select", "in_list_view": 1, "label": "Direction", "options": "Inbound\nOutbound"},
   {"fieldname": "from_number", "fieldtype": "Data", "in_list_view": 1, "label": "From Number"},
   {"fieldname": "to_number", "fieldtype": "Data", "label": "To Number"},
