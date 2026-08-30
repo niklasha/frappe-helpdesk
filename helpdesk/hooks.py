@@ -133,6 +133,7 @@ ignore_links_on_delete = [
     "HD Article Revision",
     "HD External Order Submission",
     "HD Ticket External Link",
+    "HD Customer External Record",
 ]
 
 # setup wizard
