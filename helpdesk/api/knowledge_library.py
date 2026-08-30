@@ -2,6 +2,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, now_datetime
 
+from helpdesk.api.governance import KNOWLEDGE_MANAGER_ROLE, has_helpdesk_role
 from helpdesk.utils import agent_only, is_admin
 
 
@@ -31,11 +32,12 @@ def search_knowledge(query, limit=5, category=None):
 
 def _require_knowledge_admin():
     """Curating the library is an administrative act, not an agent action."""
-    if not is_admin():
-        frappe.throw(
-            _("You are not permitted to administer the knowledge library."),
-            frappe.PermissionError,
-        )
+    if is_admin() or has_helpdesk_role(KNOWLEDGE_MANAGER_ROLE):
+        return
+    frappe.throw(
+        _("You are not permitted to administer the knowledge library."),
+        frappe.PermissionError,
+    )
 
 
 @frappe.whitelist(methods=["POST"])
