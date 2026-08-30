@@ -75,7 +75,7 @@ class HDTicket(Document):
 
     def reject_duplicate_thread(self):
         """Reject an identical inbound thread instead of creating a duplicate ticket."""
-        if not self.raised_by or not self.subject:
+        if not self.get("message_id") or not self.raised_by or not self.subject:
             return
         existing = frappe.db.exists("HD Ticket", {"raised_by": self.raised_by, "subject": self.subject})
         if existing:
