@@ -374,6 +374,10 @@ class HDTicket(Document):
             self.priority = frappe.db.get_value("HD Ticket Priority", {"level": "High"}, "name")
             if self.priority:
                 return
+        if any(keyword in subject for keyword in ("reklamation", "complaint")):
+            self.priority = frappe.db.get_value("HD Ticket Priority", {"level": "High"}, "name")
+            if self.priority:
+                return
         self.priority = frappe.get_cached_value(
             "HD Ticket Type", self.ticket_type, "priority"
         ) or frappe.get_cached_value("HD Settings", "HD Settings", "default_priority")
