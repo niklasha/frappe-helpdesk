@@ -1,3 +1,5 @@
+import json
+
 import frappe
 from frappe import _
 from frappe.utils import cint, now_datetime
@@ -94,6 +96,29 @@ def apply_submission_result(submission_id, external_order_id=None, error=None):
     if doc.status == "Submitted":
         _ensure_external_link(doc.ticket, "order", doc.external_order_id, _("Order"))
     return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def link_order_relationships(ticket_id, links):
+    """Relate a ticket to its orders, proofs, corrections and original files.
+
+    Every relation is stored once per ticket, link type and target, so replaying
+    the same set of links leaves the ticket unchanged.
+    """
+    frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+    if isinstance(links, str):
+        links = json.loads(links or "[]")
+    for link in links:
+        _ensure_external_link(
+            ticket_id, link.get("link_type"), link.get("target"), link.get("label")
+        )
+    return frappe.get_all(
+        "HD Ticket External Link",
+        filters={"ticket": ticket_id},
+        fields=["name", "ticket", "link_type", "target", "label"],
+        order_by="creation asc",
+    )
 
 
 def _external_order_id(result):
