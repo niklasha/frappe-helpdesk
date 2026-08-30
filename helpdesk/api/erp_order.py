@@ -50,6 +50,52 @@ def record_submission(ticket_id, extraction=None, idempotency_key=None, automate
     return doc.as_dict()
 
 
+def _ensure_external_link(ticket, link_type, target, label=None):
+    """Attach an external reference to a ticket once, never twice."""
+    if not target:
+        return None
+    existing = frappe.db.get_value(
+        "HD Ticket External Link",
+        {"ticket": ticket, "link_type": link_type, "target": target},
+        "name",
+    )
+    if existing:
+        return frappe.get_doc("HD Ticket External Link", existing).as_dict()
+    doc = frappe.get_doc(
+        {
+            "doctype": "HD Ticket External Link",
+            "ticket": ticket,
+            "link_type": link_type,
+            "target": target,
+            "label": label,
+        }
+    )
+    doc.insert(ignore_permissions=True)
+    return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def apply_submission_result(submission_id, external_order_id=None, error=None):
+    """Record what the external system answered for one submission.
+
+    A created order is linked back to its ticket so the agent can reach it;
+    a refusal is kept with its error so the attempt can be repeated.
+    """
+    doc = frappe.get_doc("HD External Order Submission", submission_id)
+    if error:
+        doc.attempts = cint(doc.attempts) + 1
+        doc.last_error = error
+        doc.status = "Failed"
+    else:
+        doc.status = "Submitted"
+        doc.external_order_id = external_order_id
+    doc.save(ignore_permissions=True)
+    if doc.status == "Submitted":
+        _ensure_external_link(doc.ticket, "order", doc.external_order_id, _("Order"))
+    return doc.as_dict()
+
+
 def _external_order_id(result):
     """Read the external order identifier out of whatever a connector returns."""
     if isinstance(result, dict):
