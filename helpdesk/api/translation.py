@@ -4,6 +4,7 @@ import frappe
 from frappe import _
 from frappe.utils import now_datetime
 
+from helpdesk.api import ai_generation
 from helpdesk.utils import agent_only
 
 
@@ -55,6 +56,7 @@ def record_translation(
     direction: str = "Inbound",
     provider: str | None = None,
     model_version: str | None = None,
+    prompt_version: str | int | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
     """Persist a translation next to its original text, replayable by key."""
@@ -79,6 +81,7 @@ def record_translation(
             "target_language": target_language,
             "provider": provider,
             "model_version": model_version,
+            "prompt_version": prompt_version,
             "idempotency_key": idempotency_key,
         }
     )
@@ -114,6 +117,7 @@ def translate_inbound(
     target_language: str = "sv",
     provider: str | None = None,
     model_version: str | None = None,
+    prompt_version: str | int | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
     """Record the Swedish translation of a message a customer sent us."""
@@ -125,6 +129,78 @@ def translate_inbound(
         direction="Inbound",
         provider=provider,
         model_version=model_version,
+        prompt_version=prompt_version,
+        idempotency_key=idempotency_key,
+    )
+
+
+def _translation_hint(source_language, target_language):
+    """Tell the engine which way to translate, naming the source when it is known.
+
+    A guessed source language is not worth passing on, so an undetected one is
+    simply left out and the engine reads it from the message itself.
+    """
+    hint = f"Translate the message into the language with the code {target_language}."
+    if source_language:
+        hint += f" It is written in the language with the code {source_language}."
+    return hint
+
+
+def _generated_translation(original_text, source_language, target_language):
+    """Return the engine's translation of one message, with its provenance.
+
+    A failed generation is left to surface. Recording the original text in the
+    translation's place would read, to an agent, exactly like a message that
+    needed no translation.
+    """
+    engine = ai_generation.engine_or_throw()
+    instructions, prompt_version = ai_generation._prompt(
+        ai_generation.MESSAGE_TRANSLATION
+    )
+    text, response = ai_generation.generate_text(
+        engine,
+        instructions,
+        original_text,
+        _translation_hint(source_language, target_language),
+    )
+    return text, ai_generation.provenance(response, prompt_version)
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def generate_inbound_translation(
+    ticket_id: str,
+    original_text: str,
+    target_language: str = "sv",
+    idempotency_key: str | None = None,
+) -> dict:
+    """Translate a message a customer sent us, and record it beside the original.
+
+    What the customer actually wrote is stored unchanged: the translation is a
+    reading aid for the agent, never a replacement for the words that arrived.
+
+    The languages are checked before the engine is asked. A language the
+    company has not enabled ends the same way whenever it is caught, so it is
+    caught while it is still free, and a key already used returns its record.
+    """
+    frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+    stored = ai_generation.replayed("HD Message Translation", idempotency_key)
+    if stored:
+        return frappe.get_doc("HD Message Translation", stored).as_dict()
+    source_language = detect_language_code(original_text)
+    _validate_supported_language(source_language)
+    _validate_supported_language(target_language)
+    text, generation = _generated_translation(
+        original_text, source_language, target_language
+    )
+    return translate_inbound(
+        ticket_id=ticket_id,
+        original_text=original_text,
+        translated_text=text,
+        target_language=target_language,
+        provider=generation["provider"],
+        model_version=generation["model_version"],
+        prompt_version=generation["prompt_version"],
         idempotency_key=idempotency_key,
     )
 

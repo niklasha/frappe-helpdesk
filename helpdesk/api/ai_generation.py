@@ -184,6 +184,24 @@ def _stated(value: object) -> bool:
     return True
 
 
+def generate_text(
+    engine: str, instructions: str, content: str, task_hint: str
+) -> tuple[str, dict]:
+    """Ask the engine for one piece of finished prose, with its provenance.
+
+    An empty answer is a failed generation rather than an empty result: a blank
+    message recorded as the model's own would reach a customer looking like
+    something somebody meant to write.
+    """
+    response = ai_runner.generate(
+        engine=engine, messages=_messages(instructions, task_hint, content)
+    )
+    text = (response.get("text") or "").strip()
+    if not text:
+        frappe.throw(_("The AI engine returned no text."))
+    return text, response
+
+
 def generate_json(
     engine: str,
     instructions: str,
