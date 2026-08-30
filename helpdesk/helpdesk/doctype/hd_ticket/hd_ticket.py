@@ -238,6 +238,13 @@ class HDTicket(Document):
         if account_manager and self.is_assignable_agent(account_manager):
             assign({"assign_to": [account_manager], "doctype": "HD Ticket", "name": self.name})
             return
+        mentioned = (self.description or "").lower()
+        for agent in frappe.db.get_all("HD Agent", filters={"is_active": 1}, fields=["user", "agent_name"]):
+            if not self.is_assignable_agent(agent.user):
+                continue
+            if agent.agent_name and agent.agent_name.lower() in mentioned:
+                assign({"assign_to": [agent.user], "doctype": "HD Ticket", "name": self.name})
+                return
         for agent in frappe.db.get_all("HD Agent", filters={"is_active": 1}, fields=["user"], order_by="modified asc"):
             if self.is_assignable_agent(agent.user):
                 assign({"assign_to": [agent.user], "doctype": "HD Ticket", "name": self.name})
