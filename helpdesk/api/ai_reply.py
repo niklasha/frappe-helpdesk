@@ -174,3 +174,25 @@ def answer_common_question(ticket_id, question, category=None, idempotency_key=N
         category=category,
         idempotency_key=idempotency_key,
     )
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def draft_completion_request(extraction_id, idempotency_key=None):
+    """Draft the reply that asks a customer for the order details still missing."""
+    extraction = frappe.get_doc("HD Order Extraction", extraction_id)
+    missing = extraction.missing_fields
+    if isinstance(missing, str):
+        missing = json.loads(missing or "[]")
+    if not missing:
+        frappe.throw(_("This order is not missing any information."))
+    return record_reply_draft(
+        ticket_id=extraction.ticket,
+        body=_("To continue with your order we still need: {0}").format(
+            ", ".join(missing)
+        ),
+        question_type="completion_request",
+        sources=[],
+        confidence=1,
+        idempotency_key=idempotency_key,
+    )
