@@ -50,4 +50,5 @@ helpdesk.patches.set_persona_captured_for_existing_sites
 helpdesk.patches.backfill_priority_level
 helpdesk.patches.add_tag_custom_fields
 helpdesk.patches.rename_purple_status_color
+helpdesk.patches.seed_wave1_statuses
 helpdesk.patches.set_default_portal_settings
