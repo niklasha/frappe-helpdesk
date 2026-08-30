@@ -1,7 +1,8 @@
 import json
 
 import frappe
-from frappe.utils import cint, flt, strip_html
+from frappe import _
+from frappe.utils import cint, flt, now_datetime, strip_html
 
 from helpdesk.api.knowledge_library import search_knowledge
 from helpdesk.utils import agent_only
@@ -117,3 +118,28 @@ def get_reply_sources(draft_id):
             }
         )
     return resolved
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def approve_reply_draft(draft_id):
+    """Record the human approval a drafted reply needs before it is sent."""
+    doc = frappe.get_doc("HD AI Reply Draft", draft_id)
+    doc.status = "Approved"
+    doc.approved_by = frappe.session.user
+    doc.approved_on = now_datetime()
+    doc.save(ignore_permissions=True)
+    return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def send_reply_draft(draft_id):
+    """Send an approved draft; an unapproved draft must never reach the customer."""
+    doc = frappe.get_doc("HD AI Reply Draft", draft_id)
+    if doc.status != "Approved":
+        frappe.throw(_("This reply must be approved before it is sent."))
+    doc.status = "Sent"
+    doc.sent_on = now_datetime()
+    doc.save(ignore_permissions=True)
+    return doc.as_dict()
