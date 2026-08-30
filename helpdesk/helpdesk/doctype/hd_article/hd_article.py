@@ -4,7 +4,7 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import cint
+from frappe.utils import cint, now_datetime
 
 from helpdesk.utils import capture_event
 
@@ -13,6 +13,41 @@ class HDArticle(Document):
     def validate(self):
         self.validate_article_category()
         self.validate_published_content()
+        self.version_edited_content()
+
+    def version_edited_content(self):
+        """Give every edit of an article its own version number.
+
+        Versioning lives here rather than in the curation API so that an edit
+        made through the agent knowledge base counts the same as a curated one.
+        """
+        before = None if self.is_new() else self.get_doc_before_save()
+        edited = before and (
+            before.title != self.title or before.content != self.content
+        )
+        if self.is_new() or edited or not cint(self.version):
+            self.version = cint(self.version) + 1
+
+    def on_update(self):
+        self.snapshot_version()
+
+    def snapshot_version(self):
+        """Keep a copy of every version of the text that has ever existed."""
+        if frappe.db.exists(
+            "HD Article Revision", {"article": self.name, "version": self.version}
+        ):
+            return
+        frappe.get_doc(
+            {
+                "doctype": "HD Article Revision",
+                "article": self.name,
+                "version": self.version,
+                "title": self.title,
+                "content": self.content,
+                "revised_by": frappe.session.user,
+                "revised_on": now_datetime(),
+            }
+        ).insert(ignore_permissions=True)
 
     def validate_article_category(self):
         if self.has_value_changed("category") and not self.is_new():
@@ -55,6 +90,15 @@ class HDArticle(Document):
 
     def on_trash(self):
         self.check_category_length()
+        self.discard_versions()
+
+    def discard_versions(self):
+        """A deleted article takes its revision history with it.
+
+        This runs before Frappe's link check, so the revisions this doctype
+        creates never stand in the way of deleting the article itself.
+        """
+        frappe.db.delete("HD Article Revision", {"article": self.name})
 
     def check_category_length(self, category=None):
         category = category or self.get("category")

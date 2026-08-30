@@ -1,0 +1,9 @@
+{
+ "actions": [], "autoname": "hash", "creation": "2026-08-30 00:00:00.000000", "doctype": "DocType", "engine": "InnoDB",
+ "field_order": ["article", "version", "title", "content", "revised_by", "revised_on"],
+ "fields": [
+  {"fieldname":"article","fieldtype":"Link","label":"Article","options":"HD Article","reqd":1}, {"fieldname":"version","fieldtype":"Int","label":"Version","reqd":1}, {"fieldname":"title","fieldtype":"Data","label":"Title"}, {"fieldname":"content","fieldtype":"Text Editor","label":"Content"}, {"fieldname":"revised_by","fieldtype":"Link","label":"Revised By","options":"User"}, {"fieldname":"revised_on","fieldtype":"Datetime","label":"Revised On"}
+ ],
+ "links": [], "modified": "2026-08-30 00:00:00.000000", "modified_by": "Administrator", "module": "Helpdesk", "name": "HD Article Revision", "owner": "Administrator",
+ "permissions": [{"create":1,"delete":1,"read":1,"role":"System Manager","write":1},{"create":1,"read":1,"role":"Agent","write":1}], "sort_field":"modified", "sort_order":"DESC", "states":[], "track_changes":1
+}
