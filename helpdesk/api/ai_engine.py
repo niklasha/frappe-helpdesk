@@ -13,6 +13,7 @@ from frappe import _
 from frappe.utils import cint
 from frappe.utils.password import get_decrypted_password
 
+from helpdesk.api.governance import log_configuration_change
 from helpdesk.utils import agent_only, is_admin
 
 ENGINE_FIELDS = ["engine_name", "kind", "model", "base_url", "is_default"]
@@ -89,7 +90,11 @@ def upsert_engine(
     is_default: int | bool | None = None,
     enabled: int | bool | None = None,
 ) -> dict:
-    """Create or update one AI engine, and return it as configured."""
+    """Create or update one AI engine, and return it as configured.
+
+    Which model the helpdesk speaks to is exactly the kind of change an
+    auditor asks about later, so every upsert is recorded.
+    """
     _require_admin()
     if frappe.db.exists("HD AI Engine", engine_name):
         doc = frappe.get_doc("HD AI Engine", engine_name)
@@ -133,6 +138,18 @@ def upsert_engine(
     if enabled is not None:
         doc.enabled = cint(enabled)
     doc.save(ignore_permissions=True)
+    log_configuration_change(
+        "HD AI Engine",
+        doc.name,
+        details={
+            "kind": doc.kind,
+            "model": doc.model,
+            "base_url": doc.base_url,
+            "auth_type": doc.auth_type,
+            "is_default": cint(doc.is_default),
+            "enabled": cint(doc.enabled),
+        },
+    )
     return doc.as_dict()
 
 
