@@ -35,8 +35,12 @@ def _as_text(details):
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def log_automation_event(
-    action, actor="Automation", reference_doctype=None, reference_name=None, details=None
-):
+    action: str,
+    actor: str | None = "Automation",
+    reference_doctype: str | None = None,
+    reference_name: str | None = None,
+    details: dict | list | str | None = None,
+) -> dict:
     """Record one action taken by automation so that it can be audited later."""
     doc = frappe.get_doc(
         {
@@ -54,7 +58,12 @@ def log_automation_event(
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def log_ai_event(action, reference_doctype=None, reference_name=None, details=None):
+def log_ai_event(
+    action: str,
+    reference_doctype: str | None = None,
+    reference_name: str | None = None,
+    details: dict | list | str | None = None,
+) -> dict:
     """Record an action an AI took, attributed to the AI rather than the user."""
     return log_automation_event(
         action,
@@ -67,7 +76,11 @@ def log_ai_event(action, reference_doctype=None, reference_name=None, details=No
 
 @frappe.whitelist()
 @agent_only
-def automation_events(reference_doctype=None, reference_name=None, limit=20):
+def automation_events(
+    reference_doctype: str | None = None,
+    reference_name: str | None = None,
+    limit: int | None = 20,
+) -> list:
     """Return recorded automation events, newest first."""
     filters = {}
     if reference_doctype:
@@ -85,7 +98,11 @@ def automation_events(reference_doctype=None, reference_name=None, limit=20):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def log_configuration_change(reference_doctype, reference_name, details=None):
+def log_configuration_change(
+    reference_doctype: str,
+    reference_name: str,
+    details: dict | list | str | None = None,
+) -> dict:
     """Record that a person changed one of the rules the helpdesk runs on."""
     return log_automation_event(
         CONFIGURATION_ACTION,
@@ -98,7 +115,9 @@ def log_configuration_change(reference_doctype, reference_name, details=None):
 
 @frappe.whitelist()
 @agent_only
-def configuration_changes(reference_doctype=None, limit=100):
+def configuration_changes(
+    reference_doctype: str | None = None, limit: int | None = 100
+) -> list:
     """Return the logged changes to critical configuration, newest first."""
     filters = {"actor": "User", "action": CONFIGURATION_ACTION}
     if reference_doctype:
@@ -114,7 +133,7 @@ def configuration_changes(reference_doctype=None, limit=100):
 
 @frappe.whitelist()
 @agent_only
-def has_helpdesk_role(role):
+def has_helpdesk_role(role: str) -> bool:
     """Whether the session user carries the given helpdesk role."""
     return role in frappe.get_roles(frappe.session.user)
 
@@ -136,7 +155,9 @@ def require_ai_prompt_admin():
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def upsert_ai_prompt(prompt_name, prompt, purpose=None):
+def upsert_ai_prompt(
+    prompt_name: str, prompt: str, purpose: str | None = None
+) -> dict:
     """Create or update an AI prompt, recording the change as an event."""
     require_ai_prompt_admin()
     if frappe.db.exists("HD AI Prompt", prompt_name):
