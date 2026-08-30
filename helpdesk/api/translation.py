@@ -193,7 +193,7 @@ def generate_inbound_translation(
     text, generation = _generated_translation(
         original_text, source_language, target_language
     )
-    return translate_inbound(
+    result = translate_inbound(
         ticket_id=ticket_id,
         original_text=original_text,
         translated_text=text,
@@ -203,6 +203,13 @@ def generate_inbound_translation(
         prompt_version=generation["prompt_version"],
         idempotency_key=idempotency_key,
     )
+    ai_generation.attribute(
+        "translated an incoming message",
+        "HD Message Translation",
+        result["name"],
+        generation,
+    )
+    return result
 
 
 def _ticket_customer_language(ticket_id):
@@ -269,7 +276,7 @@ def generate_outbound_translation(
         )
     _validate_supported_language(target_language)
     text, generation = _generated_translation(original_text, "sv", target_language)
-    return translate_outbound(
+    result = translate_outbound(
         ticket_id=ticket_id,
         original_text=original_text,
         translated_text=text,
@@ -279,6 +286,10 @@ def generate_outbound_translation(
         prompt_version=generation["prompt_version"],
         idempotency_key=idempotency_key,
     )
+    ai_generation.attribute(
+        "translated a reply", "HD Message Translation", result["name"], generation
+    )
+    return result
 
 
 @frappe.whitelist(methods=["POST"])
