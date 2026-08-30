@@ -1,8 +1,9 @@
 import json
 
 import frappe
-from frappe.utils import flt
+from frappe.utils import flt, strip_html
 
+from helpdesk.api.knowledge_library import search_knowledge
 from helpdesk.utils import agent_only
 
 
@@ -51,3 +52,36 @@ def record_reply_draft(
     )
     doc.insert(ignore_permissions=True)
     return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def draft_knowledge_reply(
+    ticket_id,
+    question,
+    question_type=None,
+    language=None,
+    idempotency_key=None,
+    limit=3,
+):
+    """Draft a reply grounded in the approved knowledge library."""
+    articles = search_knowledge(question, limit=limit)
+    sources = [
+        {
+            "article": article.name,
+            "title": article.title,
+            "version": article.ai_approved_version,
+        }
+        for article in articles
+    ]
+    body = "\n\n".join(strip_html(article.content or "") for article in articles)
+    return record_reply_draft(
+        ticket_id=ticket_id,
+        body=body,
+        question=question,
+        question_type=question_type,
+        language=language,
+        sources=sources,
+        confidence=1 if sources else 0,
+        idempotency_key=idempotency_key,
+    )
