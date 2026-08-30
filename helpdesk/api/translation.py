@@ -65,3 +65,10 @@ def list_supported_languages():
         fields=["language_code", "language_name"],
         order_by="language_code asc",
     )
+
+
+@frappe.whitelist()
+@agent_only
+def get_customer_language(customer):
+    """Return the language a customer prefers to be answered in."""
+    return frappe.db.get_value("HD Customer", customer, "language")
