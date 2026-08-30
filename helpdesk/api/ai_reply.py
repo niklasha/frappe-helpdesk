@@ -34,6 +34,24 @@ def _reply_instructions():
     return KNOWLEDGE_REPLY_INSTRUCTIONS, None
 
 
+def _approved_knowledge(articles):
+    """Return the citations and the engine context for one list of articles.
+
+    Both halves are derived here from the single list that passed the approval
+    filter, so no text the library has not released can reach the engine.
+    """
+    sources = [
+        {
+            "article": article.name,
+            "title": article.title,
+            "version": article.ai_approved_version,
+        }
+        for article in articles
+    ]
+    context = "\n\n".join(strip_html(article.content or "") for article in articles)
+    return sources, context
+
+
 def _reply_messages(instructions, knowledge, question):
     """Show the engine its instructions and the approved knowledge, then the question."""
     return [
@@ -122,20 +140,16 @@ def draft_knowledge_reply(
 ):
     """Draft a reply grounded in the approved knowledge library."""
     articles = search_knowledge(question, limit=limit, category=category)
-    sources = [
-        {
-            "article": article.name,
-            "title": article.title,
-            "version": article.ai_approved_version,
-        }
-        for article in articles
-    ]
-    knowledge = "\n\n".join(strip_html(article.content or "") for article in articles)
+    sources, knowledge = _approved_knowledge(articles)
     body = knowledge
     provider = None
     model_version = None
     prompt_version = None
-    engine = ai_engine.default_engine() if ai_runner.is_runner_available() else None
+    engine = (
+        ai_engine.default_engine()
+        if sources and ai_runner.is_runner_available()
+        else None
+    )
     if engine:
         instructions, prompt_version = _reply_instructions()
         response = ai_runner.generate(
