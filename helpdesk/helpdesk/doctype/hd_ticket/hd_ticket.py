@@ -74,6 +74,7 @@ class HDTicket(Document):
 
     def before_validate(self):
         self.check_update_perms()
+        self.set_external_mail()
         self.set_ticket_type()
         self.set_raised_by()
         self.set_priority()
@@ -270,6 +271,15 @@ class HDTicket(Document):
         self.ticket_type = (
             frappe.db.get_single_value("HD Settings", "default_ticket_type") or ""
         )
+
+    def set_external_mail(self):
+        """Flag messages from outside the configured internal mail domain."""
+        if self.external_mail and not self.is_new():
+            return
+        sender = (self.raised_by or "").lower()
+        domain = sender.rsplit("@", 1)[-1] if "@" in sender else ""
+        internal_domain = frappe.conf.get("mail_domain") or "appli.se"
+        self.external_mail = int(bool(domain and domain != internal_domain.lower()))
 
     def set_raised_by(self):
         if self.raised_by:

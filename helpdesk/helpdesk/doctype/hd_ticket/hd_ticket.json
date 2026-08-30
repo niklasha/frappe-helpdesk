@@ -17,6 +17,7 @@
   "status_category",
   "cb00",
   "ticket_type",
+  "external_mail",
   "agent_group",
   "summary",
   "sb_details",
@@ -128,6 +129,12 @@
    "label": "Ticket Type",
    "link_filters": "[[\"HD Ticket Type\",\"disabled\",\"=\",0]]",
    "options": "HD Ticket Type"
+  },
+  {
+   "fieldname": "external_mail",
+   "fieldtype": "Check",
+   "label": "External Mail",
+   "read_only": 1
   },
   {
    "fieldname": "agent_group",
