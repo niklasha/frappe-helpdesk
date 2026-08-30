@@ -17,6 +17,7 @@
   "status_category",
   "cb00",
   "ticket_type",
+  "production_option",
   "agent_group",
   "summary",
   "sb_details",
@@ -128,6 +129,13 @@
    "label": "Ticket Type",
    "link_filters": "[[\"HD Ticket Type\",\"disabled\",\"=\",0]]",
    "options": "HD Ticket Type"
+  },
+  {
+   "fieldname": "production_option",
+   "fieldtype": "Select",
+   "label": "Production Option",
+   "options": "Standard\nExpress\nDEX",
+   "read_only": 1
   },
   {
    "fieldname": "agent_group",

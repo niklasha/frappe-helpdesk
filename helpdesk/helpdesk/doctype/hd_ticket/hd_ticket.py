@@ -74,6 +74,7 @@ class HDTicket(Document):
 
     def before_validate(self):
         self.check_update_perms()
+        self.set_production_option()
         self.set_ticket_type()
         self.set_raised_by()
         self.set_priority()
@@ -270,6 +271,18 @@ class HDTicket(Document):
         self.ticket_type = (
             frappe.db.get_single_value("HD Settings", "default_ticket_type") or ""
         )
+
+    def set_production_option(self):
+        """Identify Standard, Express, or DEX production from the subject."""
+        if self.production_option and not self.is_new():
+            return
+        subject = (self.subject or "").lower()
+        if "dex" in subject:
+            self.production_option = "DEX"
+        elif "express" in subject:
+            self.production_option = "Express"
+        else:
+            self.production_option = "Standard"
 
     def set_raised_by(self):
         if self.raised_by:
