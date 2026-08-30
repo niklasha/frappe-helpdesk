@@ -65,6 +65,7 @@ def upsert_engine(
     headers: dict | list | str | None = None,
     options: dict | list | str | None = None,
     pricing: dict | list | str | None = None,
+    is_default: int | bool | None = None,
     enabled: int | bool | None = None,
 ) -> dict:
     """Create or update one AI engine, and return it as configured."""
@@ -106,7 +107,18 @@ def upsert_engine(
         doc.options = _as_document_text(options)
     if pricing is not None:
         doc.pricing = _as_document_text(pricing)
+    if is_default is not None:
+        doc.is_default = cint(is_default)
     if enabled is not None:
         doc.enabled = cint(enabled)
     doc.save(ignore_permissions=True)
     return doc.as_dict()
+
+
+@frappe.whitelist()
+@agent_only
+def default_engine() -> str | None:
+    """Return the engine raphain should fall back to, or None when there is none."""
+    return frappe.db.get_value(
+        "HD AI Engine", {"is_default": 1, "enabled": 1}, "engine_name"
+    )

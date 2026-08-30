@@ -3,6 +3,7 @@ import json
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import cint
 
 SUPPORTED_KINDS = (
     "openai",
@@ -41,6 +42,7 @@ class HDAIEngine(Document):
         self.validate_kind()
         self.validate_authentication()
         self.validate_documents()
+        self.validate_default()
 
     def validate_kind(self):
         """raphain has a closed set of adapters; anything else is a typo."""
@@ -153,3 +155,17 @@ class HDAIEngine(Document):
         ):
             frappe.throw(_("Headers must be a list of objects with a name and a value."))
         self.set("headers", json.dumps(headers))
+
+    def validate_default(self):
+        """raphain names one default provider, so only one engine may claim it."""
+        if not cint(self.is_default):
+            return
+        if not cint(self.enabled):
+            self.is_default = 0
+            return
+        for other in frappe.get_all(
+            "HD AI Engine",
+            filters={"is_default": 1, "name": ("!=", self.name)},
+            pluck="name",
+        ):
+            frappe.db.set_value("HD AI Engine", other, "is_default", 0)
