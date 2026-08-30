@@ -248,3 +248,33 @@ def retry_submission(submission_id):
     doc.status = "Pending"
     doc.save(ignore_permissions=True)
     return _send_to_connector(doc.as_dict())
+
+
+def _ready_extraction(ticket_id):
+    """Return the ticket's newest order extraction that is ready to be sent."""
+    names = frappe.get_all(
+        "HD Order Extraction",
+        filters={"ticket": ticket_id, "ready_for_connector": 1},
+        pluck="name",
+        order_by="creation desc",
+        limit=1,
+    )
+    return names[0] if names else None
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def submit_on_proof_approval(ticket_id, proof_reference, extraction_id=None):
+    """Submit a ticket's ready order as soon as its proof has been approved.
+
+    The approved proof is kept as an external link on the ticket, so the order
+    that follows from it can be traced back to what the customer approved.
+    """
+    frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+    extraction_id = extraction_id or _ready_extraction(ticket_id)
+    if not extraction_id:
+        frappe.throw(
+            _("Ticket {0} has no order extraction ready for the external system.").format(ticket_id)
+        )
+    _ensure_external_link(ticket_id, "proof", proof_reference, _("Approved proof"))
+    return submit_order(extraction_id=extraction_id, automated=1)
