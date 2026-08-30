@@ -1,0 +1,28 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-30 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["ticket", "link_type", "target", "label"],
+ "fields": [
+  {"fieldname": "ticket", "fieldtype": "Link", "in_list_view": 1, "label": "Ticket", "options": "HD Ticket", "reqd": 1},
+  {"fieldname": "link_type", "fieldtype": "Data", "in_list_view": 1, "label": "Link Type", "reqd": 1},
+  {"fieldname": "target", "fieldtype": "Data", "in_list_view": 1, "label": "Target", "reqd": 1},
+  {"fieldname": "label", "fieldtype": "Data", "label": "Label"}
+ ],
+ "links": [],
+ "modified": "2026-08-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Helpdesk",
+ "name": "HD Ticket External Link",
+ "owner": "Administrator",
+ "permissions": [
+  {"create": 1, "delete": 1, "read": 1, "role": "System Manager", "write": 1},
+  {"create": 1, "delete": 1, "read": 1, "role": "Agent", "write": 1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
