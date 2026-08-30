@@ -74,6 +74,7 @@ class HDTicket(Document):
 
     def before_validate(self):
         self.check_update_perms()
+        self.set_classification_model()
         self.set_ticket_type()
         self.set_raised_by()
         self.set_priority()
@@ -280,6 +281,24 @@ class HDTicket(Document):
             return
         self.ticket_type = (
             frappe.db.get_single_value("HD Settings", "default_ticket_type") or ""
+        )
+
+    def set_classification_model(self):
+        """Classify an unclassified ticket using the configured subject vocabulary."""
+        # Select fields default to their first option on new documents; only
+        # preserve an explicit classification when updating an existing ticket.
+        if self.classification_model and not self.is_new():
+            return
+        subject = (self.subject or "").lower()
+        classifications = (
+            (("order", "beställ", "bestall"), "Order"),
+            (("reklamation", "complaint"), "Reklamation"),
+            (("product", "produkt"), "Produktfråga"),
+            (("webshop", "web shop", "e-commerce"), "Webshop"),
+        )
+        self.classification_model = next(
+            (label for keywords, label in classifications if any(k in subject for k in keywords)),
+            "Övrigt",
         )
 
     def set_raised_by(self):
