@@ -78,6 +78,7 @@ class HDTicket(Document):
         self.set_production_option()
         self.set_workflow_identifier()
         self.set_shipping_method()
+        self.set_external_mail()
         self.set_ticket_type()
         self.set_raised_by()
         self.set_priority()
@@ -345,6 +346,15 @@ class HDTicket(Document):
             self.shipping_method = "Expressfrakt"
         else:
             self.shipping_method = ""
+
+    def set_external_mail(self):
+        """Flag messages from outside the configured internal mail domain."""
+        if self.external_mail and not self.is_new():
+            return
+        sender = (self.raised_by or "").lower()
+        domain = sender.rsplit("@", 1)[-1] if "@" in sender else ""
+        internal_domain = frappe.conf.get("mail_domain") or "appli.se"
+        self.external_mail = int(bool(domain and domain != internal_domain.lower()))
 
     def set_raised_by(self):
         if self.raised_by:

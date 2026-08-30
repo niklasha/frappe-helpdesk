@@ -21,6 +21,7 @@
   "production_option",
   "workflow_identifier",
   "shipping_method",
+  "external_mail",
   "agent_group",
   "summary",
   "sb_details",
@@ -159,6 +160,12 @@
    "fieldtype": "Select",
    "label": "Shipping Method",
    "options": "Expressfrakt",
+   "read_only": 1
+  },
+  {
+   "fieldname": "external_mail",
+   "fieldtype": "Check",
+   "label": "External Mail",
    "read_only": 1
   },
   {
