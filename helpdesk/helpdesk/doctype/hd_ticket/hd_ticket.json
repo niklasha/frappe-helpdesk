@@ -17,6 +17,7 @@
   "status_category",
   "cb00",
   "ticket_type",
+  "shipping_method",
   "agent_group",
   "summary",
   "sb_details",
@@ -128,6 +129,13 @@
    "label": "Ticket Type",
    "link_filters": "[[\"HD Ticket Type\",\"disabled\",\"=\",0]]",
    "options": "HD Ticket Type"
+  },
+  {
+   "fieldname": "shipping_method",
+   "fieldtype": "Select",
+   "label": "Shipping Method",
+   "options": "Expressfrakt",
+   "read_only": 1
   },
   {
    "fieldname": "agent_group",

@@ -74,6 +74,7 @@ class HDTicket(Document):
 
     def before_validate(self):
         self.check_update_perms()
+        self.set_shipping_method()
         self.set_ticket_type()
         self.set_raised_by()
         self.set_priority()
@@ -270,6 +271,18 @@ class HDTicket(Document):
         self.ticket_type = (
             frappe.db.get_single_value("HD Settings", "default_ticket_type") or ""
         )
+
+    def set_shipping_method(self):
+        """Identify a shipping method when it is stated in the subject."""
+        if self.shipping_method and not self.is_new():
+            return
+        subject = (self.subject or "").lower()
+        if "expressfrakt" in subject or "express freight" in subject:
+            self.shipping_method = "Expressfrakt"
+        elif "express" in subject:
+            self.shipping_method = "Expressfrakt"
+        else:
+            self.shipping_method = ""
 
     def set_raised_by(self):
         if self.raised_by:
