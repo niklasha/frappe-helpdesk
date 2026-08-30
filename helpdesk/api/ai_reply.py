@@ -8,11 +8,30 @@ from helpdesk.api import ai_engine, ai_runner
 from helpdesk.api.knowledge_library import search_knowledge
 from helpdesk.utils import agent_only
 
+KNOWLEDGE_REPLY_PROMPT_NAME = "knowledge_reply"
+
 KNOWLEDGE_REPLY_INSTRUCTIONS = (
     "Answer the customer question using only the approved knowledge below. "
     "When the knowledge does not cover the question, say so plainly instead of "
     "guessing, and offer to pass the question to a colleague."
 )
+
+
+def _reply_instructions():
+    """Return the reply instructions and the prompt version they came from.
+
+    An administrator owns what the AI is told, so the prompt library wins over
+    the built-in wording whenever it holds an enabled prompt.
+    """
+    prompt = frappe.db.get_value(
+        "HD AI Prompt",
+        {"prompt_name": KNOWLEDGE_REPLY_PROMPT_NAME, "enabled": 1},
+        ["prompt", "version"],
+        as_dict=True,
+    )
+    if prompt and prompt.prompt:
+        return prompt.prompt, prompt.version
+    return KNOWLEDGE_REPLY_INSTRUCTIONS, None
 
 
 def _reply_messages(instructions, knowledge, question):
@@ -115,13 +134,13 @@ def draft_knowledge_reply(
     body = knowledge
     provider = None
     model_version = None
+    prompt_version = None
     engine = ai_engine.default_engine() if ai_runner.is_runner_available() else None
     if engine:
+        instructions, prompt_version = _reply_instructions()
         response = ai_runner.generate(
             engine=engine,
-            messages=_reply_messages(
-                KNOWLEDGE_REPLY_INSTRUCTIONS, knowledge, question
-            ),
+            messages=_reply_messages(instructions, knowledge, question),
         )
         body = response.get("text")
         provider = response.get("provider")
@@ -136,6 +155,7 @@ def draft_knowledge_reply(
         confidence=1 if sources else 0,
         provider=provider,
         model_version=model_version,
+        prompt_version=prompt_version,
         idempotency_key=idempotency_key,
     )
 
