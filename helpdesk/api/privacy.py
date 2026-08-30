@@ -72,3 +72,26 @@ def expired_documents(reference_doctype):
         pluck="name",
         order_by="creation asc",
     )
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def anonymize_contact(email):
+    """Replace a contact's address on their tickets with an irreversible placeholder.
+
+    The placeholder carries a random hash, so the original address cannot be
+    derived from it and the erasure cannot be undone.
+    """
+    require_privacy_admin()
+    if not email:
+        return 0
+    tickets = frappe.get_all("HD Ticket", filters={"raised_by": email}, pluck="name")
+    if not tickets:
+        return 0
+    placeholder = f"anonymized-{frappe.generate_hash(length=12)}@example.invalid"
+    for ticket in tickets:
+        frappe.db.set_value("HD Ticket", ticket, "raised_by", placeholder)
+    frappe.logger("helpdesk").info(
+        f"Anonymized {len(tickets)} tickets as {placeholder} by {frappe.session.user}"
+    )
+    return len(tickets)
