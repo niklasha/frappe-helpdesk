@@ -251,19 +251,24 @@ class HDTicket(Document):
             return
         account_manager = self.get_customer_account_manager()
         if account_manager and self.is_assignable_agent(account_manager):
-            assign({"assign_to": [account_manager], "doctype": "HD Ticket", "name": self.name})
+            self.assign_with_reason(account_manager, "customer account manager")
             return
         mentioned = (self.description or "").lower()
         for agent in frappe.db.get_all("HD Agent", filters={"is_active": 1}, fields=["user", "agent_name"]):
             if not self.is_assignable_agent(agent.user):
                 continue
             if agent.agent_name and agent.agent_name.lower() in mentioned:
-                assign({"assign_to": [agent.user], "doctype": "HD Ticket", "name": self.name})
+                self.assign_with_reason(agent.user, "direct agent mention")
                 return
         for agent in frappe.db.get_all("HD Agent", filters={"is_active": 1}, fields=["user"], order_by="modified asc"):
             if self.is_assignable_agent(agent.user):
-                assign({"assign_to": [agent.user], "doctype": "HD Ticket", "name": self.name})
+                self.assign_with_reason(agent.user, "active-agent fallback")
                 return
+
+    def assign_with_reason(self, user, reason):
+        """Assign this ticket and persist why the routing decision was made."""
+        assign({"assign_to": [user], "doctype": "HD Ticket", "name": self.name})
+        self.db_set("assignment_reason", reason, update_modified=False)
 
     def get_customer_account_manager(self):
         """Return the key-account owner or manager configured on the customer."""
