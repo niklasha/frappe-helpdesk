@@ -55,3 +55,12 @@ def search_tickets_by_reference(reference, kind=None):
     if not reference:
         return []
     return _newest_first(_link_matches(reference, kind))
+
+
+@frappe.whitelist()
+@agent_only
+def search_tickets_by_correction(reference):
+    """Find tickets whose correction number matches the reference."""
+    if not reference:
+        return []
+    return _newest_first(_link_matches(reference, "correction"))
