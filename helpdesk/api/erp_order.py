@@ -13,7 +13,12 @@ QUEUED_STATUSES = ("Failed", "Needs Manual Handling")
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def record_submission(ticket_id, extraction=None, idempotency_key=None, automated=0):
+def record_submission(
+    ticket_id: str,
+    extraction: str | None = None,
+    idempotency_key: str | None = None,
+    automated: int | bool = 0,
+) -> dict:
     """Record one attempt to create an order in an external system.
 
     The submission starts out ``Pending``; the connector result is applied
@@ -81,7 +86,11 @@ def _ensure_external_link(ticket, link_type, target, label=None):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def apply_submission_result(submission_id, external_order_id=None, error=None):
+def apply_submission_result(
+    submission_id: str,
+    external_order_id: str | None = None,
+    error: str | None = None,
+) -> dict:
     """Record what the external system answered for one submission.
 
     A created order is linked back to its ticket so the agent can reach it;
@@ -104,7 +113,7 @@ def apply_submission_result(submission_id, external_order_id=None, error=None):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def link_order_relationships(ticket_id, links):
+def link_order_relationships(ticket_id: str, links: dict | list | str) -> list:
     """Relate a ticket to its orders, proofs, corrections and original files.
 
     Every relation is stored once per ticket, link type and target, so replaying
@@ -170,7 +179,11 @@ def _send_to_connector(submission):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def submit_order(extraction_id, idempotency_key=None, automated=0):
+def submit_order(
+    extraction_id: str,
+    idempotency_key: str | None = None,
+    automated: int | bool = 0,
+) -> dict:
     """Hand a completed order extraction to the configured external system.
 
     Without a connector the submission stays ``Pending``: Helpdesk records the
@@ -197,7 +210,7 @@ def submit_order(extraction_id, idempotency_key=None, automated=0):
 
 @frappe.whitelist()
 @agent_only
-def failed_submissions():
+def failed_submissions() -> list:
     """List the submissions the external system did not accept.
 
     These are the orders an agent has to finish by hand, either by retrying
@@ -222,7 +235,7 @@ def failed_submissions():
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def retry_submission(submission_id):
+def retry_submission(submission_id: str) -> dict:
     """Offer a refused submission to the external system once more.
 
     Only an agent who may read the ticket may retry its order. The previous
@@ -264,7 +277,9 @@ def _ready_extraction(ticket_id):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def submit_on_proof_approval(ticket_id, proof_reference, extraction_id=None):
+def submit_on_proof_approval(
+    ticket_id: str, proof_reference: str, extraction_id: str | None = None
+) -> dict:
     """Submit a ticket's ready order as soon as its proof has been approved.
 
     The approved proof is kept as an external link on the ticket, so the order
@@ -282,7 +297,7 @@ def submit_on_proof_approval(ticket_id, proof_reference, extraction_id=None):
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def submit_repeat_order(extraction_id):
+def submit_repeat_order(extraction_id: str) -> dict:
     """Submit a repeat order without an agent having to look at it.
 
     Only an extraction that was recognised as a repeat of an earlier order may
