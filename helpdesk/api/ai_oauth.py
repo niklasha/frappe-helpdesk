@@ -106,6 +106,12 @@ STATE_BYTES = 32
 # RFC 8628 section 3.2's default, for a provider that names no interval.
 DEVICE_INTERVAL_SECONDS = 5
 
+# RFC 8628 section 3.5: the two errors a device poll keeps going through, and
+# what slow_down costs. Everything else the token endpoint answers is the
+# provider ending the grant, not asking for patience.
+DEVICE_PENDING_ERRORS = ("authorization_pending", "slow_down")
+DEVICE_SLOW_DOWN_SECONDS = 5
+
 # The parameters of an authorization response that decide what happens next, and
 # that a provider therefore sends exactly once. A second copy of any of them is
 # somebody else's, put there to be the one a parser happens to pick.
@@ -1129,6 +1135,120 @@ def complete_from_redirect_url(grant: str, redirect_url: str) -> dict:
     landed = _landing_parameters(pending, redirect_url)
     _check_state(pending, landed.get("state"))
     return _exchange_code(pending, landed["code"], landed.get("state"))
+
+
+def _device_grant(name: str):
+    """Return the grant this poll is for, or say why it cannot be polled.
+
+    The redeemability rules are the ones every other grant is held to: a grant
+    the provider already ended is spent, and one nobody approved in time is
+    expired. Both are settled here, before anything is sent, because neither is
+    worth a request to the provider.
+    """
+    grant = _redeemable_grant(name)
+    if grant.mode != "device_code":
+        refuse(
+            "mode_unsupported",
+            _("This authorization is not a device grant, so there is nothing to poll."),
+        )
+    return grant
+
+
+def _due_to_poll(grant) -> bool:
+    """Whether the interval the provider asked for has passed.
+
+    RFC 8628 section 3.5's interval is not advice: polling faster than it earns a
+    slow_down and then a rate limit, and the client that caused it is the one
+    holding the only proof of an authorization in flight.
+    """
+    return not grant.next_poll_at or get_datetime(grant.next_poll_at) <= now_datetime()
+
+
+def _schedule_next_poll(grant, interval: int) -> None:
+    """Record what the provider is willing to be asked, and when it may be asked."""
+    grant.interval = interval
+    grant.next_poll_at = add_to_date(now_datetime(), seconds=interval)
+    grant.save(ignore_permissions=True)
+
+
+def _still_pending(grant, polled: bool) -> dict:
+    """What a poll that found no answer yet may say — the device code excepted.
+
+    `polled` is the part the settings page needs: a call that went no further
+    than the interval looks exactly like one the provider answered, and without
+    it the page cannot tell a provider that is thinking from one that is silent.
+    """
+    return {
+        "grant": grant.name,
+        "engine": grant.engine,
+        "provider": grant.provider,
+        "mode": grant.mode,
+        "status": "authorization_pending",
+        "polled": int(polled),
+        "interval": cint(grant.interval),
+    }
+
+
+@frappe.whitelist(methods=["POST"])
+def poll_device_authorization(grant: str) -> dict:
+    """Ask the provider once whether the administrator has approved the grant yet.
+
+    One call, one poll. The loop lives in the browser, where an administrator can
+    stop it, rather than in a worker holding a request open for the fifteen
+    minutes a device code lives. Every ending is durable: a grant the provider
+    denied or let expire becomes failed and refuses the next poll as spent, so a
+    page left open overnight cannot turn a denial into an unbounded loop against
+    the provider.
+    """
+    _require_admin()
+    pending = _device_grant(grant)
+    if not _due_to_poll(pending):
+        return _still_pending(pending, polled=False)
+
+    provider = frappe.get_doc("HD AI OAuth Provider", pending.provider)
+    body = {
+        "grant_type": DEVICE_GRANT,
+        "device_code": _grant_secret(pending, "device_code") or "",
+        "client_id": provider.client_id or "",
+    }
+    client_secret = _provider_secret(provider)
+    if client_secret:
+        body["client_secret"] = client_secret
+    status, answer = _post_grant(provider, provider.token_endpoint, body)
+    if status == 200:
+        connection = _store_connection(pending, provider, answer)
+        _finish_grant(pending, "connected")
+        connection["polled"] = 1
+        return connection
+
+    error = answer.get("error")
+    error = error if isinstance(error, str) else ""
+    if error == "access_denied":
+        _fail_grant(
+            pending,
+            "device_denied",
+            _("{0} reports that this authorization was refused.").format(provider.name),
+        )
+    if error == "expired_token":
+        _fail_grant(
+            pending,
+            "device_expired",
+            _("This device authorization expired before anybody approved it."),
+        )
+    if error not in DEVICE_PENDING_ERRORS:
+        # An error nobody kept polling through in RFC 8628 is one the provider
+        # will keep answering. Ending the grant is what stops the loop.
+        _fail_grant(
+            pending,
+            "device_denied",
+            _("{0} would not grant this device authorization.").format(provider.name),
+        )
+    interval = cint(pending.interval) or DEVICE_INTERVAL_SECONDS
+    if error == "slow_down":
+        # Section 3.5 again: slow_down means add five seconds, not try harder.
+        interval += DEVICE_SLOW_DOWN_SECONDS
+    _schedule_next_poll(pending, interval)
+    return _still_pending(pending, polled=True)
 
 
 @frappe.whitelist()
