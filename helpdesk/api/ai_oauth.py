@@ -154,6 +154,13 @@ CONNECTION_FIELDS = [
     "auth_expires_at_unix",
 ]
 
+# What a disconnect offers the provider back, and the token_type_hint RFC 7009
+# section 2.1 wants beside each one, in the order they are offered.
+REVOCABLE_CREDENTIALS = (
+    ("auth_refresh_token", "refresh_token"),
+    ("auth_access_token", "access_token"),
+)
+
 PRESETS = {
     "openai_codex": {
         "preset": "openai_codex",
@@ -1542,6 +1549,72 @@ def refresh_expiring_tokens() -> dict:
             frappe.db.commit()
             swept["refreshed"].append(engine_name)
     return swept
+
+
+def _held_credentials(engine) -> list:
+    """Every credential this connection is still holding, and what each one is.
+
+    The refresh token comes first because that is the one RFC 7009 section 2.1
+    asks a provider to take the whole grant down with. The access token is
+    offered after it all the same: that section says SHOULD, and a provider that
+    does not cascade would otherwise be left with a live bearer nobody here can
+    reach any more.
+    """
+    held = []
+    for fieldname, hint in REVOCABLE_CREDENTIALS:
+        token = _engine_secret(engine, fieldname)
+        if token:
+            held.append((token, hint))
+    return held
+
+
+def _revoke_at_provider(provider, credentials: list) -> None:
+    """Tell the provider the credentials it minted are finished with. RFC 7009.
+
+    Only where it said it takes them. A revocation endpoint is not something that
+    can be guessed from a token endpoint, and posting a live credential to an
+    address nobody advertised is exactly how one ends up somewhere it should not
+    be — so a provider that advertised none is left alone.
+
+    Nothing here decides whether the disconnect happened; that is already
+    settled and committed by the time this runs. A provider that will not answer
+    is not a reason to keep an access token exportable from Helpdesk.
+    """
+    if not provider.revocation_endpoint:
+        return
+    client_secret = _provider_secret(provider)
+    for token, hint in credentials:
+        body = {"token": token, "token_type_hint": hint, "client_id": provider.client_id or ""}
+        if client_secret:
+            body["client_secret"] = client_secret
+        try:
+            _post_grant(provider, provider.revocation_endpoint, body)
+        except frappe.ValidationError:
+            # Section 2.2 has a provider answer 200 even to a token it has never
+            # heard of, so there is no answer here worth reading and no failure
+            # worth reporting. The refusal is dropped rather than carried out on
+            # a call that succeeded.
+            frappe.clear_last_message()
+
+
+@frappe.whitelist(methods=["POST"])
+def disconnect_engine(engine_name: str) -> dict:
+    """End one engine's connection, here and at the provider that granted it.
+
+    Here first, and durably. An administrator who disconnects has decided this
+    credential is finished, so the connection ends before a word is said to
+    anybody else — an unreachable provider, or one that revokes the first token
+    and then stops answering, must not leave a connection standing on credentials
+    that are already gone upstream.
+    """
+    _require_admin()
+    engine = frappe.get_doc("HD AI Engine", _oauth_engine(engine_name).name)
+    provider = frappe.get_doc("HD AI OAuth Provider", engine.auth_oauth_provider)
+    credentials = _held_credentials(engine)
+    _end_connection(engine, forget_refresh_token=True)
+    frappe.db.commit()
+    _revoke_at_provider(provider, credentials)
+    return _connection(engine)
 
 
 @frappe.whitelist()
