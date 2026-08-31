@@ -27,6 +27,7 @@ from frappe import _
 from frappe.utils import add_to_date, cint, escape_html, get_datetime, get_url, now_datetime
 from frappe.utils.password import get_decrypted_password
 
+from helpdesk.api.governance import log_configuration_change
 from helpdesk.helpdesk.doctype.hd_ai_oauth_provider.hd_ai_oauth_provider import (
     check_endpoint,
     refuse,
@@ -374,6 +375,10 @@ def _end_connections(provider_name: str) -> None:
         pluck="name",
     ):
         _end_connection(frappe.get_doc("HD AI Engine", engine_name))
+        # Nobody pressed Koppla från on this engine, so the log is the only place
+        # the administrator will find out that editing the provider took its
+        # connection with it.
+        _audit(engine_name, "oauth_disconnected", provider=provider_name, reason="provider_moved")
 
 
 @frappe.whitelist(methods=["POST"])
@@ -698,6 +703,58 @@ def _authorize_url(provider, params: dict) -> str:
     return urlunsplit(parts._replace(query=urlencode(query), fragment=""))
 
 
+def _audit(
+    engine_name: str, action: str, performed_by: str | None = None, **facts: object
+) -> None:
+    """Record one connection change against the engine it happened to.
+
+    Binding an engine to somebody's external account is a change to the rules the
+    helpdesk runs on, so it belongs in the same log as every other one — and the
+    person is the point of the row: it says whose identity the inference is now
+    billed to and answers for. Nothing a credential could be reconstructed from
+    goes in `facts`; a connection is described by the provider it was made with
+    and the account it was made for, never by the token that carries it.
+
+    The session is not always the person. A redirect grant is finished by an
+    anonymous browser following a 302, and a row saying Guest connected the
+    engine names nobody, so callers hand over the administrator who began the
+    grant and the row is written as them.
+    """
+    session_user = frappe.session.user
+    performed_by = performed_by or session_user
+    if performed_by != session_user:
+        frappe.set_user(performed_by)
+    try:
+        log_configuration_change(
+            "HD AI Engine", engine_name, details={"action": action, **facts}
+        )
+    finally:
+        if performed_by != session_user:
+            frappe.set_user(session_user)
+
+
+def _audit_refusal(grant, slug: str) -> None:
+    """Record a grant that was refused, durably.
+
+    A forged state and a proof the provider would not take are the events that
+    say somebody is trying, and they are exactly the ones a log of successes
+    loses. Frappe rolls the request back when the refusal is thrown, so the row
+    is committed here or it is never written at all.
+
+    The reason is the refusal's own marker rather than its prose: it is the token
+    that names the rule, and it is not somebody's translated error message.
+    """
+    _audit(
+        grant.engine,
+        "oauth_connect_refused",
+        performed_by=grant.owner,
+        provider=grant.provider,
+        mode=grant.mode,
+        reason=slug,
+    )
+    frappe.db.commit()
+
+
 def _finish_grant(grant, status: str) -> None:
     """End a grant and drop the halves only a live one needs.
 
@@ -717,11 +774,12 @@ def _fail_grant(grant, slug: str, message: str, status: str = "failed") -> None:
 
     Frappe rolls the request back when the refusal is thrown, so a grant marked
     failed inside the same transaction would be pending again the next time
-    somebody presented the same code. The commit is what makes failing closed
-    survive the exception that caused it.
+    somebody presented the same code. The commit `_audit_refusal` ends on is what
+    makes both the ending and the record of it survive the exception that caused
+    them.
     """
     _finish_grant(grant, status)
-    frappe.db.commit()
+    _audit_refusal(grant, slug)
     refuse(slug, message)
 
 
@@ -766,6 +824,11 @@ def _check_state(grant, state: str | None) -> None:
     exchange they were after.
     """
     if not state or not hmac.compare_digest(_hashed(state), grant.state_hash or ""):
+        # The grant stays pending: the response was somebody else's, so it is no
+        # reason to take the administrator's own authorization away from them.
+        # The attempt is still recorded, and the state it presented is not — that
+        # is a credential wherever it is written down.
+        _audit_refusal(grant, "state_mismatch")
         refuse(
             "state_mismatch",
             _("This authorization response does not belong to this request."),
@@ -973,6 +1036,15 @@ def _store_connection(grant, provider, answer: dict) -> dict:
     _write_token(engine, token)
     engine.auth_oauth_mode = grant.mode
     engine.save(ignore_permissions=True)
+    _audit(
+        engine.name,
+        "oauth_connected",
+        performed_by=grant.owner,
+        provider=grant.provider,
+        mode=grant.mode,
+        account_id=engine.auth_account_id,
+        granted_scope=engine.auth_granted_scope,
+    )
     return _connection(engine, grant=grant.name)
 
 
@@ -1500,10 +1572,23 @@ def _refresh_connection(engine_name: str) -> dict:
         # disconnected inside the same transaction would be connected again — with
         # a credential the provider has just refused — the moment it returned.
         _end_connection(engine, forget_refresh_token=True)
+        _audit(
+            engine.name,
+            "oauth_disconnected",
+            provider=provider.name,
+            reason="refresh_refused",
+        )
         frappe.db.commit()
         raise
     _write_token(engine, token)
     engine.save(ignore_permissions=True)
+    _audit(
+        engine.name,
+        "oauth_refreshed",
+        provider=provider.name,
+        granted_scope=engine.auth_granted_scope,
+        expires_at_unix=cint(engine.auth_expires_at_unix),
+    )
     return _connection(engine)
 
 
@@ -1614,6 +1699,7 @@ def disconnect_engine(engine_name: str) -> dict:
     provider = frappe.get_doc("HD AI OAuth Provider", engine.auth_oauth_provider)
     credentials = _held_credentials(engine)
     _end_connection(engine, forget_refresh_token=True)
+    _audit(engine.name, "oauth_disconnected", provider=provider.name, reason="requested")
     frappe.db.commit()
     _revoke_at_provider(provider, credentials)
     return _connection(engine)
