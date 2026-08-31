@@ -23,7 +23,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import frappe
 import requests
 from frappe import _
-from frappe.utils import add_to_date, cint, get_datetime, get_url, now_datetime
+from frappe.utils import add_to_date, cint, escape_html, get_datetime, get_url, now_datetime
 from frappe.utils.password import get_decrypted_password
 
 from helpdesk.helpdesk.doctype.hd_ai_oauth_provider.hd_ai_oauth_provider import (
@@ -92,6 +92,11 @@ STATE_BYTES = 32
 
 # RFC 8628 section 3.2's default, for a provider that names no interval.
 DEVICE_INTERVAL_SECONDS = 5
+
+# The parameters of an authorization response that decide what happens next, and
+# that a provider therefore sends exactly once. A second copy of any of them is
+# somebody else's, put there to be the one a parser happens to pick.
+LANDING_PARAMETERS = ("code", "state", "error")
 
 # The fields a connection is read out of. The tokens are not among them: nothing
 # that renders a connection has any use for one.
@@ -899,9 +904,8 @@ def begin_authorization(engine_name: str, mode: str | None = None) -> dict:
     return _begin_code_grant(engine, provider, mode)
 
 
-@frappe.whitelist(methods=["POST"])
-def complete_authorization(grant: str, code: str, state: str | None = None) -> dict:
-    """Exchange an authorization code for a token, once.
+def _exchange_code(pending, code: str, state: str | None) -> dict:
+    """Spend one authorization code, however the administrator came back with it.
 
     The grant is finished the moment the exchange is attempted, whichever way it
     goes: a code that has been presented is spent whether or not the provider
@@ -909,9 +913,6 @@ def complete_authorization(grant: str, code: str, state: str | None = None) -> d
     redeem. Nothing is written onto the engine until the whole token response has
     been read and accepted.
     """
-    _require_admin()
-    pending = _redeemable_grant(grant)
-    _check_state(pending, state)
     provider = frappe.get_doc("HD AI OAuth Provider", pending.provider)
     body = {
         "grant_type": "authorization_code",
@@ -942,6 +943,99 @@ def complete_authorization(grant: str, code: str, state: str | None = None) -> d
     connection = _store_connection(pending, provider, answer)
     _finish_grant(pending, "connected")
     return connection
+
+
+@frappe.whitelist(methods=["POST"])
+def complete_authorization(grant: str, code: str, state: str | None = None) -> dict:
+    """Exchange an authorization code for a token, once."""
+    _require_admin()
+    pending = _redeemable_grant(grant)
+    _check_state(pending, state)
+    return _exchange_code(pending, code, state)
+
+
+def _landed_where_it_was_sent(landed: str, expected: str) -> bool:
+    """Whether the pasted string is the address the provider was told to land on.
+
+    Scheme, host, port and path, all four of them. A phishing page hands the
+    administrator a URL that looks like the one they were told to copy, and a
+    check that reads only the query accepts every one of them — including, in an
+    IdP-mixup, a code minted by an entirely different flow. The path is compared
+    as it arrived rather than resolved: `/auth/callback/../..` is a claim about
+    somewhere else however a filesystem would read it.
+    """
+    try:
+        left, right = urlsplit(landed), urlsplit(expected)
+        same_port = left.port == right.port
+    except ValueError:
+        # An authority no parser agrees on is not this grant's redirect URI, and
+        # asking which one it is has no answer worth acting on.
+        return False
+    return (
+        left.scheme.lower() == right.scheme.lower()
+        and (left.hostname or "").lower() == (right.hostname or "").lower()
+        and same_port
+        and left.path == right.path
+    )
+
+
+def _landing_parameters(grant, redirect_url: str) -> dict:
+    """Read the query of the URL the browser landed on, once it is the right URL.
+
+    The administrator pastes this string under exactly the conditions social
+    engineering is good at producing, so where it came from is settled before
+    anything inside it is read, and nothing reaches the provider until it has
+    passed. The query only: a fragment never leaves the browser, so a code found
+    there was put there by whoever built the URL rather than by the provider.
+    """
+    if not grant.redirect_uri or not _landed_where_it_was_sent(
+        redirect_url or "", grant.redirect_uri
+    ):
+        refuse(
+            "redirect_uri_mismatch",
+            _("That is not the address this authorization was told to return to."),
+        )
+    values: dict = {}
+    for name, value in parse_qsl(urlsplit(redirect_url).query, keep_blank_values=True):
+        if name in LANDING_PARAMETERS and name in values:
+            # Which of the two a parser picks is a coin toss between libraries;
+            # refusing is the only answer that is the same everywhere.
+            refuse(
+                "duplicate_parameter",
+                _("The pasted address carries {0} more than once.").format(name),
+            )
+        values[name] = value
+    if values.get("error"):
+        # RFC 6749 section 4.1.2.1. The description beside it is the provider's
+        # prose about somebody's own account, so only the code is repeated — and
+        # escaped, because the string it was read out of was typed by hand.
+        refuse(
+            "authorization_denied",
+            _("The provider did not grant this authorization: {0}.").format(
+                escape_html(values["error"])
+            ),
+        )
+    if not values.get("code"):
+        refuse("no_code", _("The pasted address carries no authorization code."))
+    return values
+
+
+@frappe.whitelist(methods=["POST"])
+def complete_from_redirect_url(grant: str, redirect_url: str) -> dict:
+    """Finish a grant from the one URL the administrator's browser landed on.
+
+    This is the mode the customer's own case needs. The public Codex client's
+    registered redirect is a loopback port on the administrator's machine, which
+    no server-side callback can ever receive, so the browser lands somewhere
+    nothing is listening and the administrator hands the address back. They still
+    type no token, no expiry and no client secret: everything but this one string
+    stays server-side.
+    """
+    _require_admin()
+    pending = _redeemable_grant(grant)
+    landed = _landing_parameters(pending, redirect_url)
+    _check_state(pending, landed.get("state"))
+    return _exchange_code(pending, landed["code"], landed.get("state"))
 
 
 @frappe.whitelist()
