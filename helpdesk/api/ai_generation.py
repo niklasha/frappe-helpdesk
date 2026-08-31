@@ -30,13 +30,65 @@ TEXT_ONLY = (
     "explanation, and no detail the material you were given does not support."
 )
 
+# One prompt per call. Sharing a prompt between two calls looked economical and
+# was not: tuning the common-question answer also retuned every knowledge reply,
+# and there was no way to make outbound translation more formal than inbound
+# without moving both.
+KNOWLEDGE_REPLY = "knowledge_reply"
+COMMON_QUESTION = "common_question"
+COMPLETION_REQUEST = "completion_request"
 TICKET_TRIAGE = "ticket_triage"
 ORDER_EXTRACTION = "order_extraction"
+TRANSLATION_INBOUND = "translation_inbound"
+TRANSLATION_OUTBOUND = "translation_outbound"
+
+# Prepended to every call's instructions when an administrator enables it: the
+# place to say once what would otherwise be copied into seven prompts and drift.
+# It names no call of its own.
+SHARED_PREAMBLE = "shared_preamble"
+
+# The names two of these calls answered to before Wave 11 split them. A site
+# that tuned the shared wording keeps reading it until it tunes the specific
+# call it meant, so splitting a prompt never silently drops a site's tuning.
 MESSAGE_TRANSLATION = "message_translation"
-COMPLETION_REQUEST = "completion_request"
+LEGACY_PROMPT_NAMES = {
+    COMMON_QUESTION: KNOWLEDGE_REPLY,
+    TRANSLATION_INBOUND: MESSAGE_TRANSLATION,
+    TRANSLATION_OUTBOUND: MESSAGE_TRANSLATION,
+}
+
+KNOWLEDGE_REPLY_INSTRUCTIONS = (
+    "Answer the customer question using only the approved knowledge below. "
+    "When the knowledge does not cover the question, say so plainly instead of "
+    "guessing, and offer to pass the question to a colleague."
+)
+
+TRANSLATION_INSTRUCTIONS = (
+    "You translate helpdesk correspondence for a Swedish print shop. "
+    "Keep the meaning, the tone and every order number, size and date "
+    "exactly as they stand, and translate nothing that is already in "
+    "the target language."
+)
 
 PROMPTS = {
+    KNOWLEDGE_REPLY: {
+        "call": "draft_knowledge_reply",
+        "purpose": "Answer a customer question from the approved knowledge library",
+        "prompt": KNOWLEDGE_REPLY_INSTRUCTIONS,
+    },
+    COMMON_QUESTION: {
+        "call": "answer_common_question",
+        "purpose": "Answer a recurring question such as delivery times or product facts",
+        "prompt": (
+            "You answer the questions this helpdesk is asked over and over — "
+            "delivery times, formats, what a product is made of. Answer from "
+            "the approved knowledge below and nothing else, in one or two "
+            "sentences a customer can act on. When the knowledge does not "
+            "cover it, say so and offer to pass the question to a colleague."
+        ),
+    },
     TICKET_TRIAGE: {
+        "call": "triage_ticket",
         "purpose": "Classify an incoming ticket and propose how to handle it",
         "prompt": (
             "You triage incoming messages for a Swedish print shop's helpdesk. "
@@ -46,6 +98,7 @@ PROMPTS = {
         ),
     },
     ORDER_EXTRACTION: {
+        "call": "extract_order",
         "purpose": "Read the order details a customer's message states",
         "prompt": (
             "You read order enquiries for a Swedish print shop. Report only the "
@@ -55,16 +108,27 @@ PROMPTS = {
             "helpdesk asks the customer about it.\n\n" + JSON_ONLY
         ),
     },
-    MESSAGE_TRANSLATION: {
-        "purpose": "Translate a message between the customer's language and Swedish",
+    TRANSLATION_INBOUND: {
+        "call": "generate_inbound_translation",
+        "purpose": "Translate a customer's message into the language agents work in",
         "prompt": (
-            "You translate helpdesk correspondence for a Swedish print shop. "
-            "Keep the meaning, the tone and every order number, size and date "
-            "exactly as they stand, and translate nothing that is already in "
-            "the target language.\n\n" + TEXT_ONLY
+            TRANSLATION_INSTRUCTIONS
+            + " This translation is read by a colleague deciding what to do, so "
+            "stay literal where literal and fluent disagree.\n\n" + TEXT_ONLY
+        ),
+    },
+    TRANSLATION_OUTBOUND: {
+        "call": "generate_outbound_translation",
+        "purpose": "Translate a reply into the language the customer writes in",
+        "prompt": (
+            TRANSLATION_INSTRUCTIONS
+            + " This translation is what the customer reads, so it must sound "
+            "like it was written in their language rather than converted into "
+            "it.\n\n" + TEXT_ONLY
         ),
     },
     COMPLETION_REQUEST: {
+        "call": "generate_completion_request",
         "purpose": "Ask a customer for the order details still missing",
         "prompt": (
             "You write short, friendly Swedish replies asking a customer for "
@@ -73,25 +137,81 @@ PROMPTS = {
             "nothing about price or delivery.\n\n" + TEXT_ONLY
         ),
     },
+    SHARED_PREAMBLE: {
+        "call": None,
+        "shared": True,
+        "purpose": "House style prepended to every AI call, when enabled",
+        "prompt": (
+            "Svara på svenska om inget annat efterfrågas. Hitta aldrig på en "
+            "uppgift: säg rakt ut när underlaget inte räcker. Lova aldrig pris "
+            "eller leveranstid som inte står i underlaget."
+        ),
+    },
 }
 
 
-def _prompt(name: str) -> tuple[str, int | None]:
-    """Return one prompt's instructions and the version they came from.
+def built_in_prompt(name: str) -> str:
+    """Return the wording a call falls back to when nothing is released."""
+    return PROMPTS.get(name, {}).get("prompt", "")
 
-    An administrator owns what the AI is told, so the prompt library wins over
-    the built-in wording whenever it holds an enabled prompt. The built-in
-    wording carries no version, because nothing released it.
+
+def _fragment(name: str) -> tuple[str | None, int | None]:
+    """Return one released fragment's wording and version, or nothing.
+
+    Only an enabled row counts. Disabling a prompt is how an administrator
+    steps back to the built-in wording without losing what they wrote.
     """
-    prompt = frappe.db.get_value(
+    row = frappe.db.get_value(
         "HD AI Prompt",
         {"prompt_name": name, "enabled": 1},
         ["prompt", "version"],
         as_dict=True,
     )
-    if prompt and prompt.prompt:
-        return prompt.prompt, prompt.version
-    return PROMPTS.get(name, {}).get("prompt", ""), None
+    if row and row.prompt:
+        return row.prompt, row.version
+    return None, None
+
+
+def _version_label(version) -> str:
+    """Name a fragment's version, including when it has none.
+
+    Built-in wording carries no version, because nothing released it — and that
+    is a fact an auditor needs stated rather than left blank.
+    """
+    return str(version) if version else "builtin"
+
+
+def _prompt(name: str) -> tuple[str, int | str | None]:
+    """Return one call's instructions and the version they came from.
+
+    An administrator owns what the AI is told, so a released prompt wins over
+    the built-in wording, and the name this call answered to before Wave 11 wins
+    over the built-in wording too.
+
+    With the shared fragment enabled the instructions are composed from two
+    prompts, and one version number can no longer describe them. The recorded
+    version then names both. A site that leaves the fragment alone keeps
+    recording exactly the bare version it always did.
+    """
+    source, instructions, version = name, None, None
+    for candidate in (name, LEGACY_PROMPT_NAMES.get(name)):
+        if not candidate:
+            continue
+        instructions, version = _fragment(candidate)
+        if instructions:
+            source = candidate
+            break
+    if not instructions:
+        instructions, version = built_in_prompt(name), None
+
+    preamble, preamble_version = _fragment(SHARED_PREAMBLE)
+    if not preamble:
+        return instructions, version
+    return (
+        f"{preamble}\n\n{instructions}",
+        f"{SHARED_PREAMBLE}:{_version_label(preamble_version)}"
+        f"+{source}:{_version_label(version)}",
+    )
 
 
 def engine_or_throw() -> str:

@@ -8,7 +8,7 @@ from helpdesk.api import ai_engine, ai_generation, ai_runner
 from helpdesk.api.knowledge_library import search_knowledge
 from helpdesk.utils import agent_only
 
-KNOWLEDGE_REPLY_PROMPT_NAME = "knowledge_reply"
+KNOWLEDGE_REPLY_PROMPT_NAME = ai_generation.KNOWLEDGE_REPLY
 
 COMPLETION_REQUEST_HINT = (
     "Write the reply in Swedish, and ask only for the fields listed below. "
@@ -17,28 +17,13 @@ COMPLETION_REQUEST_HINT = (
 
 GENERATED_COMPLETION_REQUEST = "generated_completion_request"
 
-KNOWLEDGE_REPLY_INSTRUCTIONS = (
-    "Answer the customer question using only the approved knowledge below. "
-    "When the knowledge does not cover the question, say so plainly instead of "
-    "guessing, and offer to pass the question to a colleague."
-)
+# The question type that marks a recurring question, and so selects the prompt
+# tuned for one. Answering "hur lång är leveranstiden" is a different job from
+# drafting a reply to a question nobody has asked before, and the two are tuned
+# apart.
+COMMON_QUESTION_TYPE = "common_question"
 
-
-def _reply_instructions():
-    """Return the reply instructions and the prompt version they came from.
-
-    An administrator owns what the AI is told, so the prompt library wins over
-    the built-in wording whenever it holds an enabled prompt.
-    """
-    prompt = frappe.db.get_value(
-        "HD AI Prompt",
-        {"prompt_name": KNOWLEDGE_REPLY_PROMPT_NAME, "enabled": 1},
-        ["prompt", "version"],
-        as_dict=True,
-    )
-    if prompt and prompt.prompt:
-        return prompt.prompt, prompt.version
-    return KNOWLEDGE_REPLY_INSTRUCTIONS, None
+KNOWLEDGE_REPLY_INSTRUCTIONS = ai_generation.KNOWLEDGE_REPLY_INSTRUCTIONS
 
 
 def _approved_knowledge(articles):
@@ -70,14 +55,14 @@ def _reply_messages(instructions, knowledge, question):
     ]
 
 
-def _generated_reply(engine, knowledge, question):
+def _generated_reply(engine, knowledge, question, prompt_name):
     """Return the reply the engine wrote, together with its provenance.
 
     A failed generation is deliberately not caught: falling back to the raw
     knowledge extract would let an engine that never answered masquerade as one
     that did, so the failure surfaces before any draft exists.
     """
-    instructions, prompt_version = _reply_instructions()
+    instructions, prompt_version = ai_generation._prompt(prompt_name)
     response = ai_runner.generate(
         engine=engine, messages=_reply_messages(instructions, knowledge, question)
     )
@@ -166,6 +151,13 @@ def record_reply_draft(
     return doc.as_dict()
 
 
+def _reply_prompt_name(question_type: str | None) -> str:
+    """Return the prompt tuned for the job this draft is doing."""
+    if question_type == COMMON_QUESTION_TYPE:
+        return ai_generation.COMMON_QUESTION
+    return ai_generation.KNOWLEDGE_REPLY
+
+
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def draft_knowledge_reply(
@@ -186,7 +178,7 @@ def draft_knowledge_reply(
         else None
     )
     reply = (
-        _generated_reply(engine, knowledge, question)
+        _generated_reply(engine, knowledge, question, _reply_prompt_name(question_type))
         if engine
         else _extracted_reply(knowledge)
     )
@@ -286,7 +278,7 @@ def answer_common_question(
     return draft_knowledge_reply(
         ticket_id=ticket_id,
         question=question,
-        question_type="common_question",
+        question_type=COMMON_QUESTION_TYPE,
         category=category,
         idempotency_key=idempotency_key,
     )
