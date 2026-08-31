@@ -146,7 +146,7 @@ def _translation_hint(source_language, target_language):
     return hint
 
 
-def _generated_translation(original_text, source_language, target_language):
+def _generated_translation(original_text, source_language, target_language, prompt_name):
     """Return the engine's translation of one message, with its provenance.
 
     A failed generation is left to surface. Recording the original text in the
@@ -154,9 +154,7 @@ def _generated_translation(original_text, source_language, target_language):
     needed no translation.
     """
     engine = ai_generation.engine_or_throw()
-    instructions, prompt_version = ai_generation._prompt(
-        ai_generation.MESSAGE_TRANSLATION
-    )
+    instructions, prompt_version = ai_generation._prompt(prompt_name)
     text, response = ai_generation.generate_text(
         engine,
         instructions,
@@ -191,7 +189,7 @@ def generate_inbound_translation(
     _validate_supported_language(source_language)
     _validate_supported_language(target_language)
     text, generation = _generated_translation(
-        original_text, source_language, target_language
+        original_text, source_language, target_language, ai_generation.TRANSLATION_INBOUND
     )
     result = translate_inbound(
         ticket_id=ticket_id,
@@ -275,7 +273,9 @@ def generate_outbound_translation(
             _("The language this customer reads is not known, so this reply cannot be translated.")
         )
     _validate_supported_language(target_language)
-    text, generation = _generated_translation(original_text, "sv", target_language)
+    text, generation = _generated_translation(
+        original_text, "sv", target_language, ai_generation.TRANSLATION_OUTBOUND
+    )
     result = translate_outbound(
         ticket_id=ticket_id,
         original_text=original_text,
