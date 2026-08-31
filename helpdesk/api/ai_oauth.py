@@ -31,7 +31,7 @@ from helpdesk.helpdesk.doctype.hd_ai_oauth_provider.hd_ai_oauth_provider import 
     check_endpoint,
     refuse,
 )
-from helpdesk.utils import agent_only, is_admin, is_agent
+from helpdesk.utils import is_admin, is_agent
 
 # raphain's src/auth.rs and book/src/ch26-codex-backend.md settle the two vendor
 # presets. Neither can be discovered: OpenAI's document advertises no device
@@ -277,10 +277,12 @@ def _require_admin() -> None:
 
 
 def _require_agent() -> None:
-    """Whether an engine is connected is something the settings page must render.
+    """The providers on offer and whether an engine is connected are page furniture.
 
-    An agent may read that; anybody else may not, because the provider and the
-    account behind it are facts about the organisation's own identity.
+    An agent may read both; anybody else may not, because the provider and the
+    account behind it are facts about the organisation's own identity. The gate
+    is spelled out here rather than taken from `agent_only` so that a refused
+    read names the same rule, in the same marker, as a refused write.
     """
     if not is_agent():
         refuse(
@@ -546,13 +548,13 @@ def discover_provider(
 
 
 @frappe.whitelist()
-@agent_only
 def list_providers() -> list:
     """Return the providers an engine can be bound to, newest first.
 
     The client secret is not among the fields: nothing that reads this list has
     any use for it.
     """
+    _require_agent()
     return frappe.get_all(
         "HD AI OAuth Provider",
         filters={"enabled": 1},
