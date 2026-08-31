@@ -5,6 +5,8 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint
 
+from helpdesk.helpdesk.doctype.hd_ai_oauth_provider.hd_ai_oauth_provider import refuse
+
 SUPPORTED_KINDS = (
     "openai",
     "openai_compatible",
@@ -28,6 +30,12 @@ OAUTH_FIELDS = (
 )
 
 OBJECT_FIELDS = ("parameters", "options", "pricing")
+
+# The Codex backend answers an error to a request carrying this parameter, and
+# raphain's ProviderOptions cannot be told to omit one. Dropping it quietly at
+# export would leave the settings page showing a limit that never leaves
+# Helpdesk, so the engine refuses it at save time instead.
+CODEX_UNSUPPORTED_PARAMETER = "max_output_tokens"
 
 
 class HDAIEngine(Document):
@@ -65,6 +73,10 @@ class HDAIEngine(Document):
         if auth_type == "oauth":
             self.validate_oauth()
             return
+        if self.auth_oauth_provider:
+            frappe.throw(
+                _("An OAuth provider can only be bound to an engine authenticated with oauth.")
+            )
         if any(self.get(fieldname) for fieldname in OAUTH_FIELDS):
             frappe.throw(
                 _("OAuth credentials belong to an engine authenticated with oauth.")
@@ -98,11 +110,51 @@ class HDAIEngine(Document):
                     self.engine_name or "oauth"
                 )
             )
-        if not any(given):
+        if not any(given) and not self.auth_oauth_provider:
+            # A linked provider is the third token source: Helpdesk obtains the
+            # token itself, so there is nothing for the administrator to paste.
             frappe.throw(
                 _("OAuth authentication needs an access token environment reference or an inline access token.")
             )
+        self.validate_oauth_provider()
         self.validate_oauth_refresh()
+
+    def validate_oauth_provider(self):
+        """Refuse an engine the linked provider's own backend would contradict.
+
+        Only the fields the provider states about the engine it backs are
+        checked here; a missing provider is left to the link validation that
+        runs after this, so a typo reads as a typo rather than as a conflict.
+        """
+        if not self.auth_oauth_provider:
+            return
+        provider = frappe.db.get_value(
+            "HD AI OAuth Provider",
+            self.auth_oauth_provider,
+            ["preset", "engine_base_url"],
+            as_dict=True,
+        )
+        if not provider:
+            return
+        if provider.engine_base_url and self.base_url and self.base_url != provider.engine_base_url:
+            refuse(
+                "base_url_conflict",
+                _("{0} authenticates against {1}, which only answers at {2}.").format(
+                    self.engine_name or "This engine",
+                    self.auth_oauth_provider,
+                    provider.engine_base_url,
+                ),
+            )
+        if provider.preset != "openai_codex":
+            return
+        parameters = self.parsed_document("parameters") or {}
+        if isinstance(parameters, dict) and CODEX_UNSUPPORTED_PARAMETER in parameters:
+            refuse(
+                "max_output_tokens_unsupported",
+                _("The Codex backend rejects {0}; remove it from the parameters.").format(
+                    CODEX_UNSUPPORTED_PARAMETER
+                ),
+            )
 
     def validate_oauth_refresh(self):
         """raphain errors at load time when a refresh block has nothing to exchange."""
