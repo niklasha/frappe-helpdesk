@@ -20,11 +20,14 @@ SECRET_AUTH_TYPES = ("api_key", "bearer")
 
 # raphain's AuthConfig gives oauth its own variant: it carries tokens rather
 # than the env/value pair api_key and bearer share, so the two sets of fields
-# never appear on the same engine.
+# never appear on the same engine. What a connection *is* — its mode, its status,
+# the scope and account it was granted — is not in here: those are facts Helpdesk
+# records about an engine, not credentials an administrator can misfile.
 OAUTH_FIELDS = (
     "auth_access_token_env",
     "auth_access_token",
     "auth_refresh_token_env",
+    "auth_refresh_token",
     "auth_expires_at_unix",
     "auth_refresh",
 )
