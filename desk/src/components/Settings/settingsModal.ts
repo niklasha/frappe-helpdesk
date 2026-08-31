@@ -34,6 +34,7 @@ import ZapIcon from "~icons/lucide/zap";
 import ProfilePage from "./Profile/ProfilePage.vue";
 import Preferences from "./Preferences/Preferences.vue";
 import AIEngines from "./AI/AIEngines.vue";
+import AIPrompts from "./AI/AIPrompts.vue";
 import MCPServers from "./AI/MCPServers.vue";
 import SparklesIcon from "~icons/lucide/sparkles";
 import ServerIcon from "~icons/lucide/server";
@@ -149,6 +150,11 @@ export const tabs = computed(() => {
           component: markRaw(AIEngines),
         },
         {
+          label: __("AI Prompts"),
+          icon: markRaw(MessageSquareIcon),
+          component: markRaw(AIPrompts),
+        },
+        {
           label: __("MCP Servers"),
           icon: markRaw(ServerIcon),
           component: markRaw(MCPServers),
@@ -208,6 +214,7 @@ type TabName =
   | "ERPNext"
   | "Saved Replies"
   | "AI Engines"
+  | "AI Prompts"
   | "MCP Servers";
 
 export const setActiveSettingsTab = (tabName: TabName) => {

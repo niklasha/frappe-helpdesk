@@ -21,6 +21,8 @@ def execute():
                 "purpose": prompt["purpose"],
                 "prompt": prompt["prompt"],
                 "version": 1,
-                "enabled": 1,
+                # A fragment the registry ships switched off stays off until an
+                # administrator turns it on.
+                "enabled": int(prompt.get("enabled", True)),
             }
         ).insert(ignore_permissions=True)
