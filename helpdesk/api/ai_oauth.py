@@ -69,6 +69,12 @@ DISCOVERED_ENDPOINTS = (
 # reaches it, because that is who arrives on it: an unauthenticated browser.
 CALLBACK_METHOD = "helpdesk.api.ai_oauth.oauth_redirect_callback"
 
+# Where the callback sends the browser when it is done with it. A landing page
+# the request could choose would be an open redirect signed by the helpdesk and
+# reachable without logging in, so this one is a constant of this module and
+# site-relative: the browser goes back into the app it started from.
+CALLBACK_LANDING = "/helpdesk/tickets"
+
 # The three ways a token can be acquired, and the flag that says a provider has
 # each one. They are read in this order, so the mode named in a refusal reads the
 # way the settings page lists them.
@@ -1135,6 +1141,77 @@ def complete_from_redirect_url(grant: str, redirect_url: str) -> dict:
     landed = _landing_parameters(pending, redirect_url)
     _check_state(pending, landed.get("state"))
     return _exchange_code(pending, landed["code"], landed.get("state"))
+
+
+def _grant_for_redirect(state: str | None):
+    """Find the grant this redirect belongs to, knowing nothing but its state.
+
+    Guest arrives here with a query string and no session, so the state is both
+    the name of the grant and the proof of it: the row is looked up by the digest
+    stored when the authorize URL was built, and a state matching no row names
+    nothing at all. Only redirect grants are reachable this way — a paste-back or
+    device state is redeemed through an endpoint that asks who is calling, and
+    letting an anonymous request spend one here would give away that gate.
+
+    The refusal is the same either way. Telling an unauthenticated caller which
+    of "no such state" and "not your mode" they hit is telling them how to
+    enumerate the grants in flight.
+    """
+    name = (
+        frappe.db.get_value(
+            "HD AI OAuth Grant", {"state_hash": _hashed(state), "mode": "redirect"}, "name"
+        )
+        if state
+        else None
+    )
+    if not name:
+        refuse(
+            "state_mismatch",
+            _("This authorization response does not belong to this request."),
+        )
+    return _redeemable_grant(name)
+
+
+@frappe.whitelist(allow_guest=True, methods=["GET"])
+def oauth_redirect_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> dict:
+    """Receive the provider's redirect, as the anonymous browser that carries it.
+
+    This is the one door in the module Guest may knock on, because that is who
+    arrives on it: a browser following a 302, with no session and no CSRF token.
+    The state is the whole of the credential standing in it, so it is looked up
+    and spent exactly once, and every ending settles the grant before anything
+    else happens — a state nobody issued, a code already redeemed and a grant
+    nobody finished in time are each refused without the code ever being sent.
+
+    `error_description` is accepted because the provider puts it on the query
+    string, and is then never read. It, and `error` beside it, are attacker-typed
+    text arriving on this site's own origin; repeating either into a page, a
+    message or a log turns this callback into a reflection point that needs no
+    account to reach.
+    """
+    pending = _grant_for_redirect(state)
+    if error:
+        # RFC 6749 section 4.1.2.1: the administrator pressed Deny, or the
+        # provider ended it for them. Either way this grant has nothing left.
+        _fail_grant(
+            pending,
+            "authorization_denied",
+            _("The provider did not grant this authorization."),
+        )
+    if not code:
+        _fail_grant(
+            pending,
+            "no_code",
+            _("The provider's redirect carried no authorization code."),
+        )
+    connection = _exchange_code(pending, code, state)
+    connection["redirect_to"] = CALLBACK_LANDING
+    return connection
 
 
 def _device_grant(name: str):
