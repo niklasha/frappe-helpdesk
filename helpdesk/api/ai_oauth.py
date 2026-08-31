@@ -12,19 +12,25 @@ back to Frappe" is not a mode that exists there, however much we would like it
 to be. A provider offers the modes it actually has, and no others.
 """
 
+import base64
+import hashlib
+import hmac
 import json
-from urllib.parse import urlsplit, urlunsplit
+import secrets
+import time
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import frappe
 import requests
 from frappe import _
-from frappe.utils import cint
+from frappe.utils import add_to_date, cint, get_datetime, get_url, now_datetime
+from frappe.utils.password import get_decrypted_password
 
 from helpdesk.helpdesk.doctype.hd_ai_oauth_provider.hd_ai_oauth_provider import (
     check_endpoint,
     refuse,
 )
-from helpdesk.utils import agent_only, is_admin
+from helpdesk.utils import agent_only, is_admin, is_agent
 
 # raphain's src/auth.rs and book/src/ch26-codex-backend.md settle the two vendor
 # presets. Neither can be discovered: OpenAI's document advertises no device
@@ -57,6 +63,47 @@ DISCOVERED_ENDPOINTS = (
     "device_authorization_endpoint",
     "revocation_endpoint",
 )
+
+# Where the provider's browser redirect lands when the mode is `redirect`. Guest
+# reaches it, because that is who arrives on it: an unauthenticated browser.
+CALLBACK_METHOD = "helpdesk.api.ai_oauth.oauth_redirect_callback"
+
+# The three ways a token can be acquired, and the flag that says a provider has
+# each one. They are read in this order, so the mode named in a refusal reads the
+# way the settings page lists them.
+MODE_FLAGS = {
+    "redirect": "supports_redirect",
+    "loopback_paste": "supports_loopback_paste",
+    "device_code": "supports_device_code",
+}
+
+# raphain reads the ChatGPT account out of the access token's own claims
+# (src/auth.rs:317-344); the Codex backend refuses every request without it.
+ACCOUNT_CLAIM = "https://api.openai.com/auth"
+ACCOUNT_CLAIM_KEY = "chatgpt_account_id"
+
+# RFC 7636 section 4.1 allows 43 to 128 characters; raphain's Challenge::new
+# draws 72 bytes, which lands at 96 and leaves no room for a lucky guess.
+VERIFIER_BYTES = 72
+
+# The state is the only thing between an anonymous browser redirect and a stored
+# credential, so it is drawn at the same strength as the verifier.
+STATE_BYTES = 32
+
+# RFC 8628 section 3.2's default, for a provider that names no interval.
+DEVICE_INTERVAL_SECONDS = 5
+
+# The fields a connection is read out of. The tokens are not among them: nothing
+# that renders a connection has any use for one.
+CONNECTION_FIELDS = [
+    "engine_name",
+    "auth_oauth_provider",
+    "auth_oauth_mode",
+    "auth_connection_status",
+    "auth_granted_scope",
+    "auth_account_id",
+    "auth_expires_at_unix",
+]
 
 PRESETS = {
     "openai_codex": {
@@ -169,6 +216,20 @@ def _require_admin() -> None:
         refuse(
             "not_permitted",
             _("Only an administrator may configure AI engine authorization."),
+            frappe.PermissionError,
+        )
+
+
+def _require_agent() -> None:
+    """Whether an engine is connected is something the settings page must render.
+
+    An agent may read that; anybody else may not, because the provider and the
+    account behind it are facts about the organisation's own identity.
+    """
+    if not is_agent():
+        refuse(
+            "not_permitted",
+            _("You are not permitted to see this AI engine's connection."),
             frappe.PermissionError,
         )
 
@@ -415,3 +476,481 @@ def list_providers() -> list:
         fields=PROVIDER_FIELDS,
         order_by="creation desc",
     )
+
+
+def _b64url(raw: bytes) -> str:
+    """base64url without padding, which is what every OAuth document means by it."""
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def _pkce_challenge(verifier: str) -> str:
+    """RFC 7636's S256 transformation, which the provider recomputes for itself."""
+    return _b64url(hashlib.sha256(verifier.encode()).digest())
+
+
+def _hashed(state: str) -> str:
+    """What the grant row remembers about the state it issued.
+
+    A state stored as itself is a credential sitting in a table that is read for
+    every other reason, and the row outlives the ten minutes the grant is worth
+    anything. The digest answers the only question ever asked of it.
+    """
+    return hashlib.sha256(state.encode()).hexdigest()
+
+
+def _oauth_engine(engine_name: str) -> dict:
+    """Return the engine a grant is being obtained for, or say why there is none."""
+    engine = frappe.db.get_value(
+        "HD AI Engine", engine_name, ["name", "auth_oauth_provider"], as_dict=True
+    )
+    if not engine:
+        frappe.throw(
+            _("{0} is not an AI engine.").format(engine_name), frappe.DoesNotExistError
+        )
+    if not engine.auth_oauth_provider:
+        frappe.throw(
+            _("{0} is not bound to an OAuth provider, so there is nothing to authorize.").format(
+                engine_name
+            )
+        )
+    return engine
+
+
+def _choose_mode(provider, mode: str | None) -> str:
+    """Settle how the token will be acquired, out of what the provider actually has.
+
+    The mode is a property of the provider and not of the caller: OpenAI has no
+    device endpoint, and its public client redirects to a port on the
+    administrator's own machine that no server-side callback can receive. One
+    offered mode needs no naming. More than one does, because guessing would send
+    an administrator down a flow their provider does not support. A mode that is
+    not offered is refused now rather than three calls later, when the endpoint it
+    needs turns out to be empty.
+    """
+    offered = [name for name, flag in MODE_FLAGS.items() if cint(provider.get(flag))]
+    if mode:
+        if mode not in offered:
+            refuse(
+                "mode_unsupported",
+                _("{0} does not offer the {1} authorization mode.").format(provider.name, mode),
+            )
+        return mode
+    if not offered:
+        refuse(
+            "mode_unsupported",
+            _("{0} offers no way to obtain a token.").format(provider.name),
+        )
+    if len(offered) > 1:
+        refuse(
+            "mode_required",
+            _("{0} offers more than one way to authorize; ask for one of: {1}.").format(
+                provider.name, ", ".join(offered)
+            ),
+        )
+    return offered[0]
+
+
+def _redirect_uri_for(provider, mode: str) -> str | None:
+    """Where the provider sends the browser once the administrator has approved.
+
+    Redirect mode lands back on this site. Paste-back mode lands wherever the
+    client's registration says, which for the public Codex client is a loopback
+    port on the administrator's own machine.
+    """
+    if mode == "redirect":
+        return get_url(f"/api/method/{CALLBACK_METHOD}")
+    return provider.redirect_uri
+
+
+def _provider_secret(provider) -> str | None:
+    """Read the client secret back, accepting that a public client has none."""
+    return get_decrypted_password(
+        "HD AI OAuth Provider", provider.name, "client_secret", raise_exception=False
+    )
+
+
+def _grant_secret(grant, fieldname: str) -> str | None:
+    """Read one of the halves the grant keeps server-side."""
+    return get_decrypted_password(
+        "HD AI OAuth Grant", grant.name, fieldname, raise_exception=False
+    )
+
+
+def _post_grant(provider, url: str, body: dict) -> tuple[int, dict]:
+    """Post one grant request in the body encoding the provider actually reads.
+
+    RFC 6749 says form, and raphain's two vendor presets both say JSON — the
+    Codex token endpoint answers an error to a form body. Accept goes on every
+    one of them, because a provider that answers a token request in HTML has told
+    the caller nothing it can act on.
+    """
+    headers = {"Accept": "application/json"}
+    headers.update(provider.parsed_document("extra_token_headers") or {})
+    options: dict = {"headers": headers}
+    if (provider.token_body_encoding or "form") == "json":
+        options["json"] = body
+    else:
+        options["data"] = body
+    return call_provider("POST", url, **options)
+
+
+def _authorize_url(provider, params: dict) -> str:
+    """Put the request's parameters on the provider's own authorization endpoint.
+
+    The endpoint may carry a query of its own — a policy, a tenant, an audience —
+    so the parameters are merged into it rather than appended after a guessed
+    separator.
+    """
+    parts = urlsplit(provider.authorization_endpoint)
+    query = parse_qsl(parts.query, keep_blank_values=True) + list(params.items())
+    return urlunsplit(parts._replace(query=urlencode(query), fragment=""))
+
+
+def _finish_grant(grant, status: str) -> None:
+    """End a grant and drop the halves only a live one needs.
+
+    The verifier has proved what it was for, the device code has been redeemed or
+    abandoned. A finished row that still holds either is a second copy of a
+    credential, in a table nobody thinks of as one.
+    """
+    grant.status = status
+    grant.code_verifier = None
+    grant.device_code = None
+    grant.next_poll_at = None
+    grant.save(ignore_permissions=True)
+
+
+def _fail_grant(grant, slug: str, message: str, status: str = "failed") -> None:
+    """End the grant, durably, and then refuse.
+
+    Frappe rolls the request back when the refusal is thrown, so a grant marked
+    failed inside the same transaction would be pending again the next time
+    somebody presented the same code. The commit is what makes failing closed
+    survive the exception that caused it.
+    """
+    _finish_grant(grant, status)
+    frappe.db.commit()
+    refuse(slug, message)
+
+
+def _retire_pending_grants(engine_name: str) -> None:
+    """One click, one live proof.
+
+    An administrator who presses Anslut twice must not leave two states and two
+    verifiers behind, each of them redeemable for a connection nobody is watching.
+    """
+    for stale in frappe.get_all(
+        "HD AI OAuth Grant", filters={"engine": engine_name, "status": "pending"}, pluck="name"
+    ):
+        _finish_grant(frappe.get_doc("HD AI OAuth Grant", stale), "failed")
+
+
+def _redeemable_grant(name: str):
+    """Return the grant this response may be spent against, or refuse to.
+
+    A grant is redeemable once and only while it is young. Both rules exist for
+    the same reason: a code and a state sit in a browser history, a proxy log or
+    a chat message long after the administrator has stopped watching.
+    """
+    grant = frappe.get_doc("HD AI OAuth Grant", name)
+    if grant.status != "pending":
+        refuse("grant_spent", _("This authorization has already been finished."))
+    if get_datetime(grant.expires_at) < now_datetime():
+        _fail_grant(
+            grant,
+            "grant_expired",
+            _("This authorization took too long and is no longer valid."),
+            status="expired",
+        )
+    return grant
+
+
+def _check_state(grant, state: str | None) -> None:
+    """The state is the only thing tying this response to the request we made.
+
+    It is compared as a digest, in constant time, and before anything is sent
+    anywhere: a forged state means the response belongs to somebody else's
+    authorization, and spending the code to discover that would hand them the
+    exchange they were after.
+    """
+    if not state or not hmac.compare_digest(_hashed(state), grant.state_hash or ""):
+        refuse(
+            "state_mismatch",
+            _("This authorization response does not belong to this request."),
+        )
+
+
+def _is_seconds(value: object) -> bool:
+    """Whether a token response's expires_in is a number of seconds at all."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return value > 0
+    if isinstance(value, str):
+        return value.strip().isdigit() and int(value) > 0
+    return False
+
+
+def _unverified_claims(access_token: str) -> dict:
+    """Read a JWT payload without verifying it, the way raphain does.
+
+    The signature cannot be checked here — the ChatGPT bearer is signed with a key
+    this deployment has no reason to hold — so nothing read out of it is trusted
+    further than the provider that minted it a moment ago. A token that is not a
+    JWT at all is not an error: most providers' access tokens are opaque.
+    """
+    segments = (access_token or "").split(".")
+    if len(segments) < 2:
+        return {}
+    payload = segments[1] + "=" * (-len(segments[1]) % 4)
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(payload.encode()))
+    except (ValueError, TypeError):
+        return {}
+    return claims if isinstance(claims, dict) else {}
+
+
+def _account_id(access_token: str) -> str:
+    """The ChatGPT account the Codex backend wants named on every request."""
+    auth = _unverified_claims(access_token).get(ACCOUNT_CLAIM)
+    if not isinstance(auth, dict):
+        return ""
+    account_id = auth.get(ACCOUNT_CLAIM_KEY)
+    return account_id if isinstance(account_id, str) else ""
+
+
+def _token_from(provider, answer: dict) -> dict:
+    """Read a token response, refusing one that is not a connection.
+
+    raphain treats an empty access token as a hard error, and an absent or
+    non-numeric expires_in leaves a choice between "already expired" and "never
+    expires" — neither of which is a fact about this token. Ask the provider
+    again rather than store a guess.
+    """
+    access_token = answer.get("access_token")
+    access_token = access_token.strip() if isinstance(access_token, str) else ""
+    if not access_token or not _is_seconds(answer.get("expires_in")):
+        refuse(
+            "token_response_invalid",
+            _("{0} did not answer with a usable token.").format(provider.name),
+        )
+    refresh_token = answer.get("refresh_token")
+    scope = answer.get("scope")
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token if isinstance(refresh_token, str) else "",
+        "scope": scope if isinstance(scope, str) else "",
+        "expires_at_unix": int(time.time()) + int(float(answer["expires_in"])),
+        "account_id": _account_id(access_token),
+    }
+
+
+def _store_connection(grant, provider, answer: dict) -> dict:
+    """Write a minted token onto the engine it was obtained for.
+
+    The tokens go through the document API rather than straight at the columns,
+    because that is what encrypts them; a set_value here would leave both
+    credentials readable to anybody who can read the table.
+    """
+    token = _token_from(provider, answer)
+    engine = frappe.get_doc("HD AI Engine", grant.engine)
+    engine.auth_access_token = token["access_token"]
+    if token["refresh_token"]:
+        # Absent means the provider is keeping the one it already gave us, not
+        # that it has taken it away.
+        engine.auth_refresh_token = token["refresh_token"]
+    engine.auth_expires_at_unix = token["expires_at_unix"]
+    engine.auth_granted_scope = token["scope"]
+    engine.auth_account_id = token["account_id"]
+    engine.auth_oauth_mode = grant.mode
+    engine.auth_connection_status = "connected"
+    engine.save(ignore_permissions=True)
+    return _connection(engine, grant=grant.name)
+
+
+def _connection_state(engine) -> str:
+    """A connection is only connected for as long as the token it holds is alive."""
+    status = engine.get("auth_connection_status") or "disconnected"
+    if status != "connected":
+        return status
+    return "connected" if cint(engine.get("auth_expires_at_unix")) > int(time.time()) else "expired"
+
+
+def _connection(engine, grant: str | None = None) -> dict:
+    """What may be said about a connection: facts about it, never a piece of it."""
+    answer = {
+        "engine": engine.get("engine_name"),
+        "provider": engine.get("auth_oauth_provider"),
+        "mode": engine.get("auth_oauth_mode"),
+        "status": _connection_state(engine),
+        "granted_scope": engine.get("auth_granted_scope"),
+        "account_id": engine.get("auth_account_id"),
+        "expires_at_unix": cint(engine.get("auth_expires_at_unix")),
+    }
+    if grant:
+        answer["grant"] = grant
+    return answer
+
+
+def _begin_code_grant(engine, provider, mode: str) -> dict:
+    """Build one authorization request, and keep the half the browser may not see."""
+    state = secrets.token_urlsafe(STATE_BYTES)
+    verifier = secrets.token_urlsafe(VERIFIER_BYTES) if cint(provider.supports_pkce) else None
+    redirect_uri = _redirect_uri_for(provider, mode)
+    grant = frappe.new_doc("HD AI OAuth Grant")
+    grant.update(
+        {
+            "engine": engine.name,
+            "provider": provider.name,
+            "mode": mode,
+            "status": "pending",
+            "state_hash": _hashed(state),
+            "code_verifier": verifier,
+            "redirect_uri": redirect_uri,
+            "requested_scope": provider.scope,
+        }
+    )
+    grant.insert(ignore_permissions=True)
+    params = {"response_type": "code", "client_id": provider.client_id or "", "state": state}
+    if redirect_uri:
+        params["redirect_uri"] = redirect_uri
+    if provider.scope:
+        params["scope"] = provider.scope
+    if verifier:
+        params["code_challenge"] = _pkce_challenge(verifier)
+        params["code_challenge_method"] = "S256"
+    # The Codex flow mints a token with no chatgpt_account_id claim unless these
+    # are asked for, and every backend call then fails on a missing header.
+    params.update(provider.parsed_document("extra_authorize_params") or {})
+    return {
+        "grant": grant.name,
+        "engine": engine.name,
+        "provider": provider.name,
+        "mode": mode,
+        "authorize_url": _authorize_url(provider, params),
+    }
+
+
+def _begin_device_grant(engine, provider) -> dict:
+    """RFC 8628: ask for a code the administrator types in on another device.
+
+    The user code is the half a person reads out loud. The device code is the
+    secret that redeems the grant, so it stays here.
+    """
+    body = {"client_id": provider.client_id or ""}
+    if provider.scope:
+        body["scope"] = provider.scope
+    status, answer = _post_grant(provider, provider.device_authorization_endpoint, body)
+    device_code = answer.get("device_code")
+    if status != 200 or not isinstance(device_code, str) or not device_code:
+        refuse(
+            "provider_unreachable",
+            _("{0} did not issue a device code.").format(provider.name),
+        )
+    interval = cint(answer.get("interval")) or DEVICE_INTERVAL_SECONDS
+    grant = frappe.new_doc("HD AI OAuth Grant")
+    grant.update(
+        {
+            "engine": engine.name,
+            "provider": provider.name,
+            "mode": "device_code",
+            "status": "pending",
+            "device_code": device_code,
+            "user_code": answer.get("user_code"),
+            "verification_uri": answer.get("verification_uri"),
+            "requested_scope": provider.scope,
+            "interval": interval,
+            # RFC 8628 section 3.5: the first poll waits out one interval, so a
+            # client that polls the moment it has a code is still well behaved.
+            "next_poll_at": add_to_date(now_datetime(), seconds=interval),
+        }
+    )
+    if _is_seconds(answer.get("expires_in")):
+        grant.expires_at = add_to_date(now_datetime(), seconds=int(float(answer["expires_in"])))
+    grant.insert(ignore_permissions=True)
+    return {
+        "grant": grant.name,
+        "engine": engine.name,
+        "provider": provider.name,
+        "mode": "device_code",
+        "user_code": grant.user_code,
+        "verification_uri": grant.verification_uri,
+        "verification_uri_complete": answer.get("verification_uri_complete"),
+        "interval": interval,
+    }
+
+
+@frappe.whitelist(methods=["POST"])
+def begin_authorization(engine_name: str, mode: str | None = None) -> dict:
+    """Start one authorization and hand back only the half a browser may carry.
+
+    Every parameter of the request comes off the provider record. There is no
+    argument here to point the authorize URL somewhere else, because a URL that
+    went wherever the caller named — carrying the organisation's own client id —
+    is a phishing primitive that borrows Helpdesk's credibility.
+    """
+    _require_admin()
+    engine = _oauth_engine(engine_name)
+    provider = frappe.get_doc("HD AI OAuth Provider", engine.auth_oauth_provider)
+    mode = _choose_mode(provider, mode)
+    _retire_pending_grants(engine.name)
+    if mode == "device_code":
+        return _begin_device_grant(engine, provider)
+    return _begin_code_grant(engine, provider, mode)
+
+
+@frappe.whitelist(methods=["POST"])
+def complete_authorization(grant: str, code: str, state: str | None = None) -> dict:
+    """Exchange an authorization code for a token, once.
+
+    The grant is finished the moment the exchange is attempted, whichever way it
+    goes: a code that has been presented is spent whether or not the provider
+    liked it, and a second attempt with the same pair finds nothing left to
+    redeem. Nothing is written onto the engine until the whole token response has
+    been read and accepted.
+    """
+    _require_admin()
+    pending = _redeemable_grant(grant)
+    _check_state(pending, state)
+    provider = frappe.get_doc("HD AI OAuth Provider", pending.provider)
+    body = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": provider.client_id or "",
+    }
+    if pending.redirect_uri:
+        # RFC 6749 section 4.1.3: both legs of the flow name the same one.
+        body["redirect_uri"] = pending.redirect_uri
+    verifier = _grant_secret(pending, "code_verifier")
+    if verifier:
+        body["code_verifier"] = verifier
+    client_secret = _provider_secret(provider)
+    if client_secret:
+        body["client_secret"] = client_secret
+    if cint(provider.state_in_token_body) and state:
+        # An Anthropic extension: the state is echoed in the exchange body too.
+        body["state"] = state
+    status, answer = _post_grant(provider, provider.token_endpoint, body)
+    if status != 200:
+        # The code was minted by this provider moments ago and is being presented
+        # for the first time, so the proof it could not verify is the PKCE one.
+        _fail_grant(
+            pending,
+            "pkce_failed",
+            _("{0} refused the authorization code.").format(provider.name),
+        )
+    connection = _store_connection(pending, provider, answer)
+    _finish_grant(pending, "connected")
+    return connection
+
+
+@frappe.whitelist()
+def connection_status(engine_name: str) -> dict:
+    """Say whether an engine holds a live token, without handing any of it over."""
+    _require_agent()
+    engine = frappe.db.get_value("HD AI Engine", engine_name, CONNECTION_FIELDS, as_dict=True)
+    if not engine:
+        frappe.throw(
+            _("{0} is not an AI engine.").format(engine_name), frappe.DoesNotExistError
+        )
+    return _connection(engine)
