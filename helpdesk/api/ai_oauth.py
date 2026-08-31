@@ -57,6 +57,25 @@ DISCOVERY_PATH = "/.well-known/openid-configuration"
 # socket, and the unattended refresh then wedges a background worker per tick.
 PROVIDER_TIMEOUT = 20
 
+# How far ahead of expiry the unattended sweep reaches. A token whose expiry is
+# further out than this is nobody's business yet; one inside it is renewed while
+# it still works, so the runner never holds a credential that died between ticks.
+REFRESH_WINDOW_SECONDS = 300
+
+# What a stored credential was obtained under. A token is only meaningful against
+# the client it was issued to and the endpoints it was issued by, so a change to
+# any of these is not an edit to a connection — it is a different provider under
+# the same name, and the connections made under the old one end.
+BINDING_FIELDS = (
+    "client_id",
+    "issuer",
+    "authorization_endpoint",
+    "token_endpoint",
+    "device_authorization_endpoint",
+    "revocation_endpoint",
+    "redirect_uri",
+)
+
 # The endpoints a discovery document may name, and the flag each one feeds.
 DISCOVERED_ENDPOINTS = (
     "authorization_endpoint",
@@ -325,6 +344,29 @@ def _same_issuer(claimed: str, expected: str) -> bool:
     )
 
 
+def _binding_of(provider) -> dict:
+    """The configuration a token obtained from this provider would belong to."""
+    return {fieldname: provider.get(fieldname) or "" for fieldname in BINDING_FIELDS}
+
+
+def _end_connections(provider_name: str) -> None:
+    """End every connection obtained under a provider that has just moved.
+
+    `upsert_provider` is an upsert, so one field is all it takes to point the
+    token endpoint at a host of the editor's choosing — and the next refresh
+    would post a live refresh token to it. The access token goes now, because it
+    was minted by somebody we no longer talk to; the refresh token stays where it
+    is, unusable and unexported, because it is what tells the next refresh that
+    this connection moved rather than that it was never made.
+    """
+    for engine_name in frappe.get_all(
+        "HD AI Engine",
+        filters={"auth_oauth_provider": provider_name, "auth_connection_status": "connected"},
+        pluck="name",
+    ):
+        _end_connection(frappe.get_doc("HD AI Engine", engine_name))
+
+
 @frappe.whitelist(methods=["POST"])
 def upsert_provider(
     provider_name: str,
@@ -362,12 +404,14 @@ def upsert_provider(
     preset is not re-applied over an administrator's own values.
     """
     _require_admin()
-    if frappe.db.exists("HD AI OAuth Provider", provider_name):
+    existing = frappe.db.exists("HD AI OAuth Provider", provider_name)
+    if existing:
         doc = frappe.get_doc("HD AI OAuth Provider", provider_name)
     else:
         doc = frappe.new_doc("HD AI OAuth Provider")
         doc.provider_name = provider_name
         doc.update(PRESETS.get(preset or DEFAULT_PRESET, {}))
+    bound_to = _binding_of(doc)
     given = {
         "preset": preset,
         "client_id": client_id,
@@ -405,6 +449,8 @@ def upsert_provider(
         else:
             doc.set(fieldname, value)
     doc.save(ignore_permissions=True)
+    if existing and _binding_of(doc) != bound_to:
+        _end_connections(doc.name)
     return doc.as_dict()
 
 
@@ -596,6 +642,13 @@ def _provider_secret(provider) -> str | None:
     """Read the client secret back, accepting that a public client has none."""
     return get_decrypted_password(
         "HD AI OAuth Provider", provider.name, "client_secret", raise_exception=False
+    )
+
+
+def _engine_secret(engine, fieldname: str) -> str | None:
+    """Read one of the credentials a connection left on the engine."""
+    return get_decrypted_password(
+        "HD AI Engine", engine.name, fieldname, raise_exception=False
     )
 
 
@@ -851,19 +904,13 @@ def _read_token(grant, provider, answer: dict) -> dict:
         raise
 
 
-def _store_connection(grant, provider, answer: dict) -> dict:
-    """Write a minted token onto the engine it was obtained for.
-
-    The response is read in full before the engine is touched: a refusal halfway
-    through would otherwise leave an engine holding a token the rest of the
-    document says is unusable.
+def _write_token(engine, token: dict) -> None:
+    """Put a minted token on the engine it was obtained for.
 
     The tokens go through the document API rather than straight at the columns,
     because that is what encrypts them; a set_value here would leave both
     credentials readable to anybody who can read the table.
     """
-    token = _read_token(grant, provider, answer)
-    engine = frappe.get_doc("HD AI Engine", grant.engine)
     engine.auth_access_token = token["access_token"]
     if token["refresh_token"]:
         # Absent means the provider is keeping the one it already gave us, not
@@ -872,8 +919,50 @@ def _store_connection(grant, provider, answer: dict) -> dict:
     engine.auth_expires_at_unix = token["expires_at_unix"]
     engine.auth_granted_scope = token["scope"]
     engine.auth_account_id = token["account_id"]
-    engine.auth_oauth_mode = grant.mode
     engine.auth_connection_status = "connected"
+
+
+def _end_connection(engine, forget_refresh_token: bool = False) -> None:
+    """Stop this engine being connected, and take the access token away with it.
+
+    Whatever ended the connection, the token exported from here is the only
+    credential the runner has and nothing renews it downstream — so it goes at
+    the same moment the connection does, rather than staying live-looking in a
+    registry document until somebody notices the 401s.
+    """
+    engine.auth_access_token = None
+    engine.auth_expires_at_unix = 0
+    engine.auth_connection_status = "disconnected"
+    if forget_refresh_token:
+        engine.auth_refresh_token = None
+    engine.save(ignore_permissions=True)
+
+
+def _distrust_token(engine) -> None:
+    """Keep the connection, and stop vouching for the token it is holding.
+
+    A provider that did not answer said nothing about the credential, so the
+    connection stands and the sweep will try again. What cannot stand is the
+    access token: we tried to renew it because it is about to die, could not, and
+    exporting it as live in the meantime hands a runner a credential that fails
+    silently for as long as nobody looks.
+    """
+    engine.auth_access_token = None
+    engine.auth_expires_at_unix = 0
+    engine.save(ignore_permissions=True)
+
+
+def _store_connection(grant, provider, answer: dict) -> dict:
+    """Write a minted token onto the engine this grant was obtained for.
+
+    The response is read in full before the engine is touched: a refusal halfway
+    through would otherwise leave an engine holding a token the rest of the
+    document says is unusable.
+    """
+    token = _read_token(grant, provider, answer)
+    engine = frappe.get_doc("HD AI Engine", grant.engine)
+    _write_token(engine, token)
+    engine.auth_oauth_mode = grant.mode
     engine.save(ignore_permissions=True)
     return _connection(engine, grant=grant.name)
 
@@ -1326,6 +1415,133 @@ def poll_device_authorization(grant: str) -> dict:
         interval += DEVICE_SLOW_DOWN_SECONDS
     _schedule_next_poll(pending, interval)
     return _still_pending(pending, polled=True)
+
+
+def _refresh_body(engine, provider, refresh_token: str) -> dict:
+    """RFC 6749 section 6, with the client the token was issued to named again."""
+    body = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": provider.client_id or "",
+    }
+    # Section 6 lets the request name a scope, and forbids a wider one than was
+    # granted. Asking for exactly what this connection already holds keeps a
+    # provider that reads the parameter from quietly narrowing the token.
+    scope = engine.auth_granted_scope or provider.scope
+    if scope:
+        body["scope"] = scope
+    client_secret = _provider_secret(provider)
+    if client_secret:
+        body["client_secret"] = client_secret
+    return body
+
+
+def _refresh_connection(engine_name: str) -> dict:
+    """Renew one engine's access token from the refresh token it is holding.
+
+    Helpdesk does this rather than the runner because raphain's declarative
+    refresh block cannot: OAuthRefreshConfig posts a form and carries no headers,
+    and the Codex token endpoint reads JSON. The body encoding comes off the
+    provider record for the same reason every other request in this module does —
+    it is a fact about the provider, not about the code that talks to it.
+
+    Every ending is durable and closed. A provider that refuses the credential
+    ends the connection and takes the dead refresh token with it; a provider that
+    says nothing has told us nothing about the credential, so that connection
+    stands and only the access token stops being exported.
+    """
+    engine = frappe.get_doc("HD AI Engine", _oauth_engine(engine_name).name)
+    provider = frappe.get_doc("HD AI OAuth Provider", engine.auth_oauth_provider)
+    refresh_token = _engine_secret(engine, "auth_refresh_token")
+    if refresh_token and engine.auth_connection_status == "disconnected":
+        # A credential kept by a connection that is no longer live is one whose
+        # provider was reconfigured under it. Posting it now would send it to
+        # whichever host the edit named.
+        refuse(
+            "provider_repointed",
+            _("{0} has been reconfigured since {1} was connected to it.").format(
+                provider.name, engine.name
+            ),
+        )
+    if not refresh_token:
+        refuse(
+            "refresh_failed",
+            _("{0} holds no refresh token, so there is nothing to renew.").format(engine.name),
+        )
+
+    body = _refresh_body(engine, provider, refresh_token)
+    try:
+        status, answer = _post_grant(provider, provider.token_endpoint, body)
+    except frappe.ValidationError:
+        _distrust_token(engine)
+        frappe.db.commit()
+        raise
+    try:
+        if status != 200:
+            # Revoked at the provider, rotated out of band, or simply too old.
+            # The error beside it is the provider's prose about somebody's own
+            # account, and the body it was answering carried the credential.
+            refuse(
+                "refresh_failed",
+                _("{0} would not renew this connection.").format(provider.name),
+            )
+        token = _token_from(provider, answer, requested_scope=body.get("scope"))
+    except frappe.ValidationError:
+        # Frappe rolls the request back when the refusal is thrown, so an engine
+        # disconnected inside the same transaction would be connected again — with
+        # a credential the provider has just refused — the moment it returned.
+        _end_connection(engine, forget_refresh_token=True)
+        frappe.db.commit()
+        raise
+    _write_token(engine, token)
+    engine.save(ignore_permissions=True)
+    return _connection(engine)
+
+
+@frappe.whitelist(methods=["POST"])
+def refresh_engine_token(engine_name: str) -> dict:
+    """Renew one engine's token now, and say what the connection looks like after."""
+    _require_admin()
+    return _refresh_connection(engine_name)
+
+
+def refresh_expiring_tokens() -> dict:
+    """Renew every connection whose token is about to die. Unattended.
+
+    This is the path that keeps a connection working between the day an
+    administrator made it and the day they think about it again, so it runs as
+    Administrator on a timer — and is deliberately not whitelisted, because a
+    whitelisted sweep is a way for anybody who can reach the site to make it talk
+    to every configured provider on demand.
+
+    One provider being down is not a reason to leave every other engine's token
+    to expire, so each engine is refreshed on its own and what went wrong is left
+    where the next call can see it: on the engine. Nothing is written to the error
+    log, because a traceback from here quotes the exchange it failed in.
+    """
+    due = frappe.get_all(
+        "HD AI Engine",
+        filters={
+            "enabled": 1,
+            "auth_type": "oauth",
+            "auth_oauth_provider": ["is", "set"],
+            "auth_connection_status": "connected",
+            "auth_expires_at_unix": ["<", int(time.time()) + REFRESH_WINDOW_SECONDS],
+        },
+        pluck="name",
+        order_by="creation asc",
+    )
+    swept: dict = {"refreshed": [], "failed": []}
+    for engine_name in due:
+        try:
+            _refresh_connection(engine_name)
+        except Exception:
+            frappe.db.rollback()
+            swept["failed"].append(engine_name)
+        else:
+            frappe.db.commit()
+            swept["refreshed"].append(engine_name)
+    return swept
 
 
 @frappe.whitelist()

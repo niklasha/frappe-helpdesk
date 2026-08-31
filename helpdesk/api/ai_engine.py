@@ -7,6 +7,7 @@ a raphain-embedding runner consumes. No inference happens here.
 """
 
 import json
+import time
 
 import frappe
 from frappe import _
@@ -31,6 +32,7 @@ REGISTRY_FIELDS = [
     "auth_refresh_token_env",
     "auth_expires_at_unix",
     "auth_refresh",
+    "auth_connection_status",
     "auth_account_id",
     "parameters",
     "headers",
@@ -198,19 +200,45 @@ def _stored_secret(engine, fieldname):
     )
 
 
+def _token_is_live(engine) -> bool:
+    """Whether the stored access token is still one a runner could use.
+
+    A token an administrator typed in is exported as it was configured: Helpdesk
+    was told nothing about its life and has no standing to withhold it. One
+    Helpdesk obtained through a provider it knows about is different — it knows
+    exactly when that token dies, and there is no refresh block behind it, so a
+    dead one exported as live is a runner sending a credential that stopped
+    working hours ago on every request.
+    """
+    if not engine.get("auth_oauth_provider"):
+        return True
+    return (
+        engine.get("auth_connection_status") == "connected"
+        and cint(engine.get("auth_expires_at_unix")) > int(time.time())
+    )
+
+
 def _oauth_block(engine, include_secrets=False) -> dict:
-    """Describe an OAuth engine in raphain's oauth variant, which has no env/value."""
+    """Describe an OAuth engine in raphain's oauth variant, which has no env/value.
+
+    A connection Helpdesk obtained itself carries no refresh block and no refresh
+    token: OAuthRefreshConfig posts a form and carries no headers, so a block
+    emitted for a JSON token endpoint would fail the first time the runner ran
+    it. Helpdesk refreshes those connections instead, and exports nothing
+    downstream could not honour.
+    """
+    helpdesk_refreshes = bool(engine.get("auth_oauth_provider"))
     auth = {"type": "oauth"}
     if engine.auth_access_token_env:
         auth["access_token_env"] = engine.auth_access_token_env
-    if engine.auth_refresh_token_env:
+    if engine.auth_refresh_token_env and not helpdesk_refreshes:
         auth["refresh_token_env"] = engine.auth_refresh_token_env
     if engine.auth_expires_at_unix:
         auth["expires_at_unix"] = cint(engine.auth_expires_at_unix)
     refresh = _stored_document(engine.get("auth_refresh"))
-    if refresh:
+    if refresh and not helpdesk_refreshes:
         auth["refresh"] = refresh
-    if include_secrets:
+    if include_secrets and _token_is_live(engine):
         access_token = _stored_secret(engine, "auth_access_token")
         if access_token:
             auth["access_token"] = access_token
