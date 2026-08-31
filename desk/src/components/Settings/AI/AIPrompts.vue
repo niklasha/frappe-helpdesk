@@ -65,14 +65,19 @@
     <template #default>
       <form class="flex flex-col gap-4" @submit.prevent="savePrompt.submit()">
         <p class="text-sm text-ink-gray-6">{{ editing?.purpose }}</p>
-        <!-- The shared fragment is off until an administrator turns it on: with
-             it enabled a generation is produced from two prompts, and its
-             recorded version names both instead of one. -->
+        <!-- Two different retreats, and both are worth having. Switching a prompt
+             off falls back to the built-in wording while keeping what was
+             written here; resetting overwrites it and takes a new version. The
+             shared fragment ships off, because turning it on changes how every
+             generation records the version it came from. -->
         <FormControl
-          v-if="editing?.shared"
           v-model="draft.enabled"
           type="checkbox"
-          :label="__('Prepend this to every AI call')"
+          :label="
+            editing?.shared
+              ? __('Prepend this to every AI call')
+              : __('Use this wording instead of the built-in one')
+          "
         />
         <FormControl
           v-model="draft.prompt"
@@ -151,9 +156,8 @@ const savePrompt = createResource({
     prompt: draft.prompt,
   }),
   onSuccess: async () => {
-    // Enabling is its own change, and only the shared fragment offers the
-    // switch — every other prompt is enabled by the act of releasing it.
-    if (editing.value.shared && draft.enabled !== Boolean(editing.value.enabled)) {
+    // Enabling is its own change, logged separately from the wording.
+    if (draft.enabled !== Boolean(editing.value.enabled)) {
       await setEnabled.submit();
     }
     showDialog.value = false;
