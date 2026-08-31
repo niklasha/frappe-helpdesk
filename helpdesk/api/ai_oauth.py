@@ -13,12 +13,17 @@ to be. A provider offers the modes it actually has, and no others.
 """
 
 import json
+from urllib.parse import urlsplit, urlunsplit
 
 import frappe
+import requests
 from frappe import _
 from frappe.utils import cint
 
-from helpdesk.helpdesk.doctype.hd_ai_oauth_provider.hd_ai_oauth_provider import refuse
+from helpdesk.helpdesk.doctype.hd_ai_oauth_provider.hd_ai_oauth_provider import (
+    check_endpoint,
+    refuse,
+)
 from helpdesk.utils import agent_only, is_admin
 
 # raphain's src/auth.rs and book/src/ch26-codex-backend.md settle the two vendor
@@ -33,6 +38,25 @@ CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
 
 DEFAULT_PRESET = "generic_oidc"
+
+# RFC 8628's grant, which a discovery document advertises alongside the endpoint.
+DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+
+# OpenID Connect Discovery 1.0 section 4: the issuer plus this path.
+DISCOVERY_PATH = "/.well-known/openid-configuration"
+
+# Every outbound call this module makes waits this long and no longer. Without a
+# bound the worker is held for as long as the far end feels like holding the
+# socket, and the unattended refresh then wedges a background worker per tick.
+PROVIDER_TIMEOUT = 20
+
+# The endpoints a discovery document may name, and the flag each one feeds.
+DISCOVERED_ENDPOINTS = (
+    "authorization_endpoint",
+    "token_endpoint",
+    "device_authorization_endpoint",
+    "revocation_endpoint",
+)
 
 PRESETS = {
     "openai_codex": {
@@ -156,6 +180,60 @@ def _as_document_text(value: dict | list | str) -> str:
     return json.dumps(value)
 
 
+def call_provider(method: str, url: str, **options: object) -> tuple[int, dict]:
+    """Make the one kind of outbound call this module makes, and always time it out.
+
+    Discovery, the code exchange, the device poll and the refresh all reach a URL
+    an administrator typed, so all of them go through here and all of them carry
+    `timeout`. The status is handed back rather than judged: a token endpoint's
+    400 carries the error the caller has to read, while a body that is not JSON
+    carries nothing at all.
+    """
+    options.setdefault("timeout", PROVIDER_TIMEOUT)
+    try:
+        response = requests.request(method, url, **options)
+    except requests.RequestException:
+        # The exception text can repeat the body that was posted, which for a
+        # refresh is a live credential. Only the address goes in the message.
+        refuse("provider_unreachable", _("{0} did not answer in time.").format(url))
+    try:
+        answer = response.json()
+    except ValueError:
+        answer = {}
+    return response.status_code, answer if isinstance(answer, dict) else {}
+
+
+def _discovery_document_url(discovery_url: str) -> str:
+    """Accept either the issuer or the document, and return the document's URL.
+
+    An administrator is given an issuer — that is what a provider's own
+    documentation prints — so the well-known path is appended for them. One who
+    pastes the full document URL is left alone.
+    """
+    parts = urlsplit((discovery_url or "").strip())
+    if "/.well-known/" in parts.path:
+        return urlunsplit(parts._replace(query="", fragment=""))
+    path = parts.path.rstrip("/") + DISCOVERY_PATH
+    return urlunsplit(parts._replace(path=path, query="", fragment=""))
+
+
+def _issuer_of(document_url: str) -> str:
+    """The issuer the document at this URL is allowed to claim to be."""
+    parts = urlsplit(document_url)
+    path = parts.path[: -len(DISCOVERY_PATH)] if parts.path.endswith(DISCOVERY_PATH) else parts.path
+    return urlunsplit(parts._replace(path=path.rstrip("/"), query="", fragment=""))
+
+
+def _same_issuer(claimed: str, expected: str) -> bool:
+    """Compare two issuers the way RFC 8414 does: on the authority, not the text."""
+    left, right = urlsplit(claimed or ""), urlsplit(expected or "")
+    return (
+        left.scheme.lower() == right.scheme.lower()
+        and (left.netloc or "").lower() == (right.netloc or "").lower()
+        and left.path.rstrip("/") == right.path.rstrip("/")
+    )
+
+
 @frappe.whitelist(methods=["POST"])
 def upsert_provider(
     provider_name: str,
@@ -237,6 +315,90 @@ def upsert_provider(
             doc.set(fieldname, value)
     doc.save(ignore_permissions=True)
     return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+def discover_provider(
+    provider_name: str,
+    discovery_url: str,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    scope: str | None = None,
+    redirect_uri: str | None = None,
+    token_body_encoding: str | None = None,
+    allow_insecure_loopback: int | bool | None = None,
+    enabled: int | bool | None = None,
+) -> dict:
+    """Configure a provider from the document it publishes about itself.
+
+    An administrator pastes one URL and gets endpoints and capabilities that
+    match what the provider actually offers, rather than four fields typed from
+    a vendor page and a device flow that turns out not to exist. The flags are
+    derived from the advertised grants and endpoints, never assumed: a mode this
+    record does not claim is a mode `begin_authorization` will refuse.
+
+    Nothing is written until the whole document has been accepted. A document
+    that names somebody else, or that points the exchange at plain http, leaves
+    no half-configured provider behind for the next attempt to trip over.
+    """
+    _require_admin()
+    allow_loopback = bool(cint(allow_insecure_loopback))
+    document_url = _discovery_document_url(discovery_url)
+    check_endpoint(document_url, _("Discovery URL"), allow_insecure_loopback=allow_loopback)
+
+    status, document = call_provider("GET", document_url)
+    if status != 200 or not document:
+        refuse(
+            "provider_unreachable",
+            _("{0} did not answer with a discovery document.").format(document_url),
+        )
+
+    # RFC 8414 section 3.3. Without this one provider's document configures a
+    # client that talks to another, which is the whole of the IdP mix-up attack.
+    issuer = _issuer_of(document_url)
+    claimed = (document.get("issuer") or "").strip()
+    if not _same_issuer(claimed, issuer):
+        refuse(
+            "issuer_mismatch",
+            _("The discovery document at {0} claims to be issued by somebody else.").format(
+                document_url
+            ),
+        )
+
+    # An endpoint the document no longer advertises is cleared rather than left
+    # standing, so the record says what the provider offers today.
+    endpoints = {
+        fieldname: (document.get(fieldname) or "").strip() for fieldname in DISCOVERED_ENDPOINTS
+    }
+    # The transport rule again, because the document is where a downgrade would
+    # arrive: fetched over TLS, and then naming an http token endpoint.
+    meta = frappe.get_meta("HD AI OAuth Provider")
+    for fieldname, url in endpoints.items():
+        check_endpoint(url, meta.get_label(fieldname), allow_insecure_loopback=allow_loopback)
+
+    grants = document.get("grant_types_supported") or []
+    challenges = document.get("code_challenge_methods_supported") or []
+    return upsert_provider(
+        provider_name=provider_name,
+        preset=DEFAULT_PRESET,
+        client_id=client_id,
+        client_secret=client_secret,
+        issuer=claimed,
+        discovery_url=document_url,
+        scope=scope,
+        redirect_uri=redirect_uri,
+        token_body_encoding=token_body_encoding,
+        allow_insecure_loopback=allow_loopback,
+        supports_pkce=int("S256" in challenges),
+        supports_redirect=int(
+            "authorization_code" in grants and bool(endpoints["authorization_endpoint"])
+        ),
+        supports_device_code=int(
+            DEVICE_GRANT in grants and bool(endpoints["device_authorization_endpoint"])
+        ),
+        enabled=enabled,
+        **endpoints,
+    )
 
 
 @frappe.whitelist()
