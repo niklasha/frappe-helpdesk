@@ -16,6 +16,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -81,6 +82,18 @@ MODE_FLAGS = {
 # (src/auth.rs:317-344); the Codex backend refuses every request without it.
 ACCOUNT_CLAIM = "https://api.openai.com/auth"
 ACCOUNT_CLAIM_KEY = "chatgpt_account_id"
+
+# The presets whose backend reads that claim. Only the ChatGPT surface does, so
+# only there is a token without one useless the moment it is stored; every other
+# provider mints tokens that carry no such claim and are perfectly good.
+ACCOUNT_CLAIM_PRESETS = ("openai_codex",)
+
+# What may be repeated into an HTTP header. RFC 7230's field-vchar and nothing
+# else: a CR or an LF here is request splitting, and the claim is read out of an
+# unverified JWT, so whoever controls the provider writes this value. The length
+# is generous beside the account identifier OpenAI actually mints.
+ACCOUNT_ID_PATTERN = re.compile(r"\A[\x21-\x7e]+\Z")
+ACCOUNT_ID_MAX_LENGTH = 128
 
 # RFC 7636 section 4.1 allows 43 to 128 characters; raphain's Challenge::new
 # draws 72 bytes, which lands at 96 and leaves no room for a lucky guess.
@@ -715,22 +728,73 @@ def _unverified_claims(access_token: str) -> dict:
     return claims if isinstance(claims, dict) else {}
 
 
-def _account_id(access_token: str) -> str:
-    """The ChatGPT account the Codex backend wants named on every request."""
+def _account_claim(access_token: str) -> object:
+    """The chatgpt_account_id claim exactly as it arrived, whatever shape that is.
+
+    Nothing is coerced here. A claim that is not a string has to be told apart
+    from one that is not there at all: the first is a provider saying something
+    this code will not repeat, the second is a token that cannot address the
+    Codex backend.
+    """
     auth = _unverified_claims(access_token).get(ACCOUNT_CLAIM)
     if not isinstance(auth, dict):
+        return None
+    return auth.get(ACCOUNT_CLAIM_KEY)
+
+
+def _account_id(provider, access_token: str) -> str:
+    """The ChatGPT account the Codex backend wants named on every request.
+
+    The claim becomes an HTTP header value and is read out of a JWT nobody
+    verified, so it is checked as one before it is stored: a newline in it is a
+    second request smuggled into the first. The value itself is never repeated
+    into the refusal — the whole point is that it does not belong in a string
+    somebody else's parser will read.
+    """
+    claim = _account_claim(access_token)
+    if claim is None or claim == "":
+        if (provider.get("preset") or "") in ACCOUNT_CLAIM_PRESETS:
+            refuse(
+                "no_account_id",
+                _("{0} minted a token that names no ChatGPT account.").format(provider.name),
+            )
         return ""
-    account_id = auth.get(ACCOUNT_CLAIM_KEY)
-    return account_id if isinstance(account_id, str) else ""
+    if (
+        not isinstance(claim, str)
+        or len(claim) > ACCOUNT_ID_MAX_LENGTH
+        or not ACCOUNT_ID_PATTERN.match(claim)
+    ):
+        refuse(
+            "account_id_invalid",
+            _("{0} named an account this token cannot carry in a header.").format(provider.name),
+        )
+    return claim
 
 
-def _token_from(provider, answer: dict) -> dict:
+def _scope_was_granted(requested: str | None, granted: str | None) -> bool:
+    """Whether the provider gave every scope that was asked for.
+
+    RFC 6749 section 5.1: a response naming no scope granted the one requested,
+    so an absent scope is not a downgrade. A narrower one is, and it fails at the
+    first inference call hours later for reasons nothing here can see.
+    """
+    asked = set((requested or "").split())
+    if not asked or not (granted or "").strip():
+        return True
+    return asked <= set(granted.split())
+
+
+def _token_from(provider, answer: dict, requested_scope: str | None = None) -> dict:
     """Read a token response, refusing one that is not a connection.
 
-    raphain treats an empty access token as a hard error, and an absent or
-    non-numeric expires_in leaves a choice between "already expired" and "never
-    expires" — neither of which is a fact about this token. Ask the provider
-    again rather than store a guess.
+    A token response is a document somebody else wrote, and every rule here is a
+    failure that would otherwise land on a user instead of on the administrator
+    who pressed Connect. raphain treats an empty access token as a hard error; an
+    absent or non-numeric expires_in leaves a choice between "already expired"
+    and "never expires", neither of which is a fact about this token; a granted
+    scope narrower than the one asked for is a connection that 403s at the first
+    inference call; and a Codex token naming no account cannot address the
+    backend at all. Ask the provider again rather than store a guess.
     """
     access_token = answer.get("access_token")
     access_token = access_token.strip() if isinstance(access_token, str) else ""
@@ -739,25 +803,54 @@ def _token_from(provider, answer: dict) -> dict:
             "token_response_invalid",
             _("{0} did not answer with a usable token.").format(provider.name),
         )
-    refresh_token = answer.get("refresh_token")
     scope = answer.get("scope")
+    scope = scope if isinstance(scope, str) else ""
+    if requested_scope is None:
+        requested_scope = provider.scope
+    if not _scope_was_granted(requested_scope, scope):
+        refuse(
+            "scope_not_granted",
+            _("{0} granted less than this connection asked for.").format(provider.name),
+        )
+    refresh_token = answer.get("refresh_token")
     return {
         "access_token": access_token,
         "refresh_token": refresh_token if isinstance(refresh_token, str) else "",
-        "scope": scope if isinstance(scope, str) else "",
+        "scope": scope,
         "expires_at_unix": int(time.time()) + int(float(answer["expires_in"])),
-        "account_id": _account_id(access_token),
+        "account_id": _account_id(provider, access_token),
     }
+
+
+def _read_token(grant, provider, answer: dict) -> dict:
+    """Read the token response this grant paid for, and end the grant if it is not one.
+
+    The code was spent at the provider the moment the exchange was posted, so a
+    response that fails any of the rules above leaves a grant with nothing left
+    to redeem rather than one that sits pending and looks retryable. The commit
+    is what makes that survive the rollback the refusal causes, exactly as it is
+    for an exchange the provider itself rejected.
+    """
+    try:
+        return _token_from(provider, answer, requested_scope=grant.requested_scope)
+    except frappe.ValidationError:
+        _finish_grant(grant, "failed")
+        frappe.db.commit()
+        raise
 
 
 def _store_connection(grant, provider, answer: dict) -> dict:
     """Write a minted token onto the engine it was obtained for.
 
+    The response is read in full before the engine is touched: a refusal halfway
+    through would otherwise leave an engine holding a token the rest of the
+    document says is unusable.
+
     The tokens go through the document API rather than straight at the columns,
     because that is what encrypts them; a set_value here would leave both
     credentials readable to anybody who can read the table.
     """
-    token = _token_from(provider, answer)
+    token = _read_token(grant, provider, answer)
     engine = frappe.get_doc("HD AI Engine", grant.engine)
     engine.auth_access_token = token["access_token"]
     if token["refresh_token"]:
