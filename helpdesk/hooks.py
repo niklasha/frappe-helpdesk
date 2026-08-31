@@ -44,6 +44,12 @@ scheduler_events = {
     "hourly_long": [
         "helpdesk.helpdesk.doctype.hd_ticket.hd_ticket.update_sla_status_in_ticket"
     ],
+    "cron": {
+        # An OAuth connection renews itself or it stops working, and a ChatGPT
+        # access token lives an hour. The sweep reaches five minutes ahead of
+        # expiry, so it has to run more often than that window is wide.
+        "*/5 * * * *": ["helpdesk.api.ai_oauth.refresh_expiring_tokens"],
+    },
 }
 
 
