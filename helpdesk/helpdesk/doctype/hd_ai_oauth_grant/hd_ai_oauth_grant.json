@@ -1,0 +1,9 @@
+{
+ "actions": [], "autoname": "hash", "creation": "2026-08-31 00:00:00.000000", "doctype": "DocType", "engine": "InnoDB",
+ "field_order": ["engine", "provider", "mode", "status", "state_hash", "code_verifier", "device_code", "user_code", "verification_uri", "redirect_uri", "requested_scope", "interval", "next_poll_at", "expires_at"],
+ "fields": [
+  {"fieldname":"engine","fieldtype":"Link","in_list_view":1,"label":"Engine","options":"HD AI Engine","reqd":1}, {"fieldname":"provider","fieldtype":"Link","in_list_view":1,"label":"Provider","options":"HD AI OAuth Provider","reqd":1}, {"fieldname":"mode","fieldtype":"Select","in_list_view":1,"label":"Mode","options":"redirect\nloopback_paste\ndevice_code"}, {"default":"pending","fieldname":"status","fieldtype":"Select","in_list_view":1,"label":"Status","options":"pending\nconnected\nfailed\nexpired"}, {"fieldname":"state_hash","fieldtype":"Data","label":"State Hash"}, {"fieldname":"code_verifier","fieldtype":"Password","label":"Code Verifier"}, {"fieldname":"device_code","fieldtype":"Password","label":"Device Code"}, {"fieldname":"user_code","fieldtype":"Data","label":"User Code"}, {"fieldname":"verification_uri","fieldtype":"Data","label":"Verification URI"}, {"fieldname":"redirect_uri","fieldtype":"Data","label":"Redirect URI"}, {"fieldname":"requested_scope","fieldtype":"Small Text","label":"Requested Scope"}, {"default":"5","fieldname":"interval","fieldtype":"Int","label":"Interval"}, {"fieldname":"next_poll_at","fieldtype":"Datetime","label":"Next Poll At"}, {"fieldname":"expires_at","fieldtype":"Datetime","label":"Expires At"}
+ ],
+ "links": [], "modified": "2026-08-31 00:00:00.000000", "modified_by": "Administrator", "module": "Helpdesk", "name": "HD AI OAuth Grant", "naming_rule": "Random", "owner": "Administrator",
+ "permissions": [{"create":1,"delete":1,"read":1,"role":"System Manager","write":1}], "sort_field":"modified", "sort_order":"DESC", "states":[], "track_changes":0
+}
