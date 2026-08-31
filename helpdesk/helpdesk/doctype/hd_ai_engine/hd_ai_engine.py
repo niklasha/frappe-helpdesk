@@ -119,6 +119,17 @@ class HDAIEngine(Document):
             frappe.throw(
                 _("OAuth authentication needs an access token environment reference or an inline access token.")
             )
+        if any(given) and self.auth_oauth_provider and not self.flags.get("token_from_grant"):
+            # The grant writes this field, so a typed value is either about to be
+            # overwritten or was never a token at all — a password manager filling
+            # the box is the way that happens in practice, and it leaves an engine
+            # that looks configured and can never work.
+            refuse(
+                "token_not_needed",
+                _("{0} takes its token from {1}. Connect it instead of typing one.").format(
+                    self.engine_name or "This engine", self.auth_oauth_provider
+                ),
+            )
         self.validate_oauth_provider()
         self.validate_oauth_refresh()
 
@@ -134,11 +145,22 @@ class HDAIEngine(Document):
         provider = frappe.db.get_value(
             "HD AI OAuth Provider",
             self.auth_oauth_provider,
-            ["preset", "engine_base_url"],
+            ["preset", "engine_base_url", "engine_kind"],
             as_dict=True,
         )
         if not provider:
             return
+        if provider.engine_kind and self.kind and self.kind != provider.engine_kind:
+            # raphain maps kind to a wire dialect: "openai" is chat completions,
+            # "openai_responses" is the Responses API. OpenAI has retired the
+            # former, so the wrong kind here sends every request to a path the
+            # backend does not serve — and the form lists "openai" first.
+            refuse(
+                "kind_conflict",
+                _("{0} speaks {1}, not {2}.").format(
+                    self.auth_oauth_provider, provider.engine_kind, self.kind
+                ),
+            )
         if provider.engine_base_url and self.base_url and self.base_url != provider.engine_base_url:
             refuse(
                 "base_url_conflict",
