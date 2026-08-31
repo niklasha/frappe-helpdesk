@@ -190,6 +190,9 @@ PRESETS = {
         # The ChatGPT bearer is not an API key: it belongs to the Codex backend
         # and must never reach api.openai.com.
         "engine_base_url": "https://chatgpt.com/backend-api/codex",
+        # OpenAI has retired chat completions; the Codex backend speaks the
+        # Responses dialect, which raphain reaches through ProviderKind::OpenaiResponses.
+        "engine_kind": "openai_responses",
         "engine_headers": [{"name": "originator", "value": "codex_cli_rs"}],
         "engine_options": {"force_stream": True},
         "engine_parameters": {"extra": {"store": False}},
@@ -226,6 +229,12 @@ PRESETS = {
 }
 
 PROVIDER_FIELDS = [
+    # The backend the provider authenticates for, so the form can stop offering a
+    # base URL the preset contradicts.
+    "engine_base_url",
+    # The dialect its backend speaks. OpenAI has retired chat completions, so a
+    # Codex engine on kind "openai" would post to a path that no longer exists.
+    "engine_kind",
     "provider_name",
     "preset",
     "client_id",
@@ -983,6 +992,11 @@ def _write_token(engine, token: dict) -> None:
     because that is what encrypts them; a set_value here would leave both
     credentials readable to anybody who can read the table.
     """
+    # The engine refuses a token typed next to a linked provider, because that is
+    # how a password manager's autofill becomes a stored credential. This is the
+    # one writer the rule is not aimed at: the grant is where the token is
+    # supposed to come from.
+    engine.flags.token_from_grant = True
     engine.auth_access_token = token["access_token"]
     if token["refresh_token"]:
         # Absent means the provider is keeping the one it already gave us, not

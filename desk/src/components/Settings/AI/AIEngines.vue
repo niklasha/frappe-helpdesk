@@ -83,7 +83,21 @@
           :placeholder="__('openai-primary')"
           :disabled="!isNew"
         />
+        <!-- The provider names the dialect its backend speaks, and raphain maps
+             kind straight to a wire path: choosing the wrong one posts to an
+             endpoint that does not exist. -->
         <FormControl
+          v-if="providerKind"
+          :model-value="providerKind"
+          type="text"
+          disabled
+          :label="__('Kind')"
+          :description="
+            __('The dialect {0} speaks.').replace('{0}', engine.auth_oauth_provider)
+          "
+        />
+        <FormControl
+          v-else
           v-model="engine.kind"
           type="select"
           :label="__('Kind')"
@@ -95,11 +109,28 @@
           :label="__('Model')"
           :placeholder="__('gpt-4o')"
         />
+        <!-- A provider whose preset names its own backend owns this value: the
+             Codex bearer is refused by api.openai.com, so offering that address
+             here only builds a configuration the engine will reject on save. -->
         <FormControl
+          v-if="providerBaseUrl"
+          :model-value="providerBaseUrl"
+          type="text"
+          disabled
+          :label="__('Base URL')"
+          :description="
+            __('Set by {0}, which is the only backend its token is accepted by.').replace(
+              '{0}',
+              engine.auth_oauth_provider
+            )
+          "
+        />
+        <FormControl
+          v-else
           v-model="engine.base_url"
           type="text"
           :label="__('Base URL')"
-          :placeholder="__('https://api.openai.com/v1')"
+          :placeholder="__('Leave empty unless the provider needs a specific host')"
         />
         <FormControl
           v-model="engine.auth_type"
@@ -122,6 +153,7 @@
           <FormControl
             v-model="engine.auth_secret"
             type="password"
+            autocomplete="new-password"
             :label="__('Secret')"
             :placeholder="__('sk-...')"
             :description="
@@ -299,6 +331,7 @@
             <FormControl
               v-model="engine.auth_access_token"
               type="password"
+              autocomplete="new-password"
               :label="__('Access token')"
               :placeholder="__('ya29....')"
               :description="
@@ -463,6 +496,16 @@ const chosenProvider = computed(() =>
   )
 );
 
+// The backend the chosen provider authenticates for, when its preset names one.
+// Empty for a generic OIDC provider, which leaves the field to the administrator.
+const providerKind = computed(
+  () => (isOAuth.value && chosenProvider.value?.engine_kind) || ""
+);
+
+const providerBaseUrl = computed(
+  () => (isOAuth.value && chosenProvider.value?.engine_base_url) || ""
+);
+
 // begin_authorization refuses to guess when a provider offers more than one way
 // in, so the page names the mode out of the flags it has already been given.
 const offeredModes = computed(() =>
@@ -570,9 +613,12 @@ const saveEngine = createResource({
     const values = engine.value;
     const params: Record<string, any> = {
       engine_name: values.engine_name,
-      kind: values.kind,
+      // A locked field shows the provider's value while the model still holds
+      // whatever was chosen before the provider was picked, so send what is on
+      // screen rather than what was left behind.
+      kind: providerKind.value || values.kind,
       model: values.model,
-      base_url: values.base_url,
+      base_url: providerBaseUrl.value ? "" : values.base_url,
       auth_type: values.auth_type,
       enabled: values.enabled ? 1 : 0,
       is_default: values.is_default ? 1 : 0,
