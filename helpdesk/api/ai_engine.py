@@ -78,6 +78,7 @@ def upsert_engine(
     auth_env: str | None = None,
     auth_secret: str | None = None,
     auth_header: str | None = None,
+    auth_oauth_provider: str | None = None,
     auth_access_token_env: str | None = None,
     auth_access_token: str | None = None,
     auth_refresh_token_env: str | None = None,
@@ -115,6 +116,8 @@ def upsert_engine(
         doc.auth_secret = auth_secret
     if auth_header is not None:
         doc.auth_header = auth_header
+    if auth_oauth_provider is not None:
+        doc.auth_oauth_provider = auth_oauth_provider
     if auth_access_token_env is not None:
         doc.auth_access_token_env = auth_access_token_env
     if auth_access_token is not None:
