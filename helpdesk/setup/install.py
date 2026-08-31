@@ -11,11 +11,15 @@ from .default_template import create_default_template
 from .file import create_helpdesk_folder
 from .ticket_feedback import create_ticket_feedback_options
 from .ticket_type import create_fallback_ticket_type, create_ootb_ticket_types
+from .seed import seed_reference_data
 from .welcome_ticket import create_welcome_ticket
 
 
 def after_install():
     create_custom_fields(get_custom_fields())
+    # Reference data a patch would never deliver here: bench new-site records
+    # every existing patch as applied without running it.
+    seed_reference_data()
     add_default_status()
     add_default_agent_status()
     add_default_categories_and_articles()
