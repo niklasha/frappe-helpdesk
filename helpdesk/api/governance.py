@@ -153,6 +153,113 @@ def require_ai_prompt_admin():
     require_role(AI_MANAGER_ROLE)
 
 
+def _prompt_row(prompt_name: str, released: dict | None) -> dict:
+    """Describe one prompt as an administrator needs to see it.
+
+    Every prompt the code can ask for is described, released or not, because a
+    library that lists only what someone has already edited hides exactly the
+    six calls nobody has looked at yet.
+    """
+    from helpdesk.api import ai_generation
+
+    built_in = ai_generation.PROMPTS.get(prompt_name, {})
+    wording = (released or {}).get("prompt") or built_in.get("prompt", "")
+    return {
+        "prompt_name": prompt_name,
+        "call": built_in.get("call"),
+        "shared": bool(built_in.get("shared")),
+        "purpose": (released or {}).get("purpose") or built_in.get("purpose", ""),
+        "prompt": wording,
+        "built_in": built_in.get("prompt", ""),
+        # Whether anyone has tuned this call is the first thing to know about it,
+        # and a released row whose wording matches the built-in one has not been.
+        "customised": bool(released) and wording != built_in.get("prompt", ""),
+        "version": (released or {}).get("version"),
+        "enabled": cint((released or {}).get("enabled")),
+        "released": bool(released),
+    }
+
+
+@frappe.whitelist()
+@agent_only
+def list_ai_prompts() -> list:
+    """Return every prompt the AI calls read, with what governs each."""
+    from helpdesk.api import ai_generation
+
+    released = {
+        row["prompt_name"]: row
+        for row in frappe.get_all(
+            "HD AI Prompt",
+            fields=["prompt_name", "purpose", "prompt", "version", "enabled"],
+        )
+    }
+    known = list(ai_generation.PROMPTS)
+    # A prompt released under a name the code no longer asks for still governs
+    # the call that falls back to it, so it is shown rather than hidden.
+    known += [name for name in released if name not in ai_generation.PROMPTS]
+    return [_prompt_row(name, released.get(name)) for name in known]
+
+
+@frappe.whitelist()
+@agent_only
+def get_ai_prompt(prompt_name: str) -> dict:
+    """Return one prompt as it now stands."""
+    released = frappe.db.get_value(
+        "HD AI Prompt",
+        {"prompt_name": prompt_name},
+        ["prompt_name", "purpose", "prompt", "version", "enabled"],
+        as_dict=True,
+    )
+    return _prompt_row(prompt_name, released)
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def set_ai_prompt_enabled(prompt_name: str, enabled: int | bool) -> dict:
+    """Turn one prompt on or off without losing what was written in it.
+
+    Disabling is how an administrator steps back to the built-in wording while
+    keeping a draft they are still working on.
+    """
+    require_ai_prompt_admin()
+    if frappe.db.exists("HD AI Prompt", prompt_name):
+        doc = frappe.get_doc("HD AI Prompt", prompt_name)
+    else:
+        from helpdesk.api import ai_generation
+
+        doc = frappe.new_doc("HD AI Prompt")
+        doc.prompt_name = prompt_name
+        doc.prompt = ai_generation.built_in_prompt(prompt_name)
+        doc.purpose = ai_generation.PROMPTS.get(prompt_name, {}).get("purpose")
+    doc.enabled = cint(enabled)
+    doc.save(ignore_permissions=True)
+    log_configuration_change(
+        "HD AI Prompt", doc.name, details=f"enabled={cint(enabled)}"
+    )
+    return get_ai_prompt(prompt_name)
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def reset_ai_prompt(prompt_name: str) -> dict:
+    """Put one prompt back to the wording Helpdesk ships with.
+
+    Tuning is only worth doing when it is reversible, and a reset is a change
+    like any other: it takes a new version and is logged, so the wording that
+    produced yesterday's generations stays reconstructable.
+    """
+    require_ai_prompt_admin()
+    from helpdesk.api import ai_generation
+
+    built_in = ai_generation.built_in_prompt(prompt_name)
+    if not built_in:
+        frappe.throw(
+            _("{0} has no built-in wording to return to.").format(prompt_name)
+        )
+    upsert_ai_prompt(prompt_name=prompt_name, prompt=built_in)
+    return get_ai_prompt(prompt_name)
+
+
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def upsert_ai_prompt(

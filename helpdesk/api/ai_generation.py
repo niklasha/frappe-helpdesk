@@ -140,6 +140,11 @@ PROMPTS = {
     SHARED_PREAMBLE: {
         "call": None,
         "shared": True,
+        # Seeded switched off, and that is the whole compatibility story: with
+        # it on, a generation is produced from two prompts and records a version
+        # naming both. A site that never turns it on keeps recording the bare
+        # version every earlier wave asserts against.
+        "enabled": False,
         "purpose": "House style prepended to every AI call, when enabled",
         "prompt": (
             "Svara på svenska om inget annat efterfrågas. Hitta aldrig på en "
