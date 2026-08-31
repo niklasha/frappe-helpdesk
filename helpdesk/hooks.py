@@ -139,6 +139,8 @@ ignore_links_on_delete = [
     "HD Automation Event",
     "HD AI Engine",
     "HD AI MCP Server",
+    "HD AI OAuth Provider",
+    "HD AI OAuth Grant",
 ]
 
 # setup wizard
