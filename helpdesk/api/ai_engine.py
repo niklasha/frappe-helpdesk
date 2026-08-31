@@ -26,10 +26,12 @@ REGISTRY_FIELDS = [
     "auth_type",
     "auth_env",
     "auth_header",
+    "auth_oauth_provider",
     "auth_access_token_env",
     "auth_refresh_token_env",
     "auth_expires_at_unix",
     "auth_refresh",
+    "auth_account_id",
     "parameters",
     "headers",
     "options",
@@ -37,6 +39,21 @@ REGISTRY_FIELDS = [
 ]
 
 DOCUMENT_FIELDS = ("parameters", "headers", "options", "pricing")
+
+# What a bound OAuth provider states about the backend it fronts. raphain's
+# ProviderConfig can carry every one of these as ordinary configuration, which
+# is why the Codex quirks need no builder the registry document cannot reach.
+BACKEND_FIELDS = [
+    "engine_base_url",
+    "engine_headers",
+    "engine_options",
+    "engine_parameters",
+]
+
+# raphain reads the ChatGPT account out of the token's own claims rather than
+# off the provider record, so this header is per engine and exists only once a
+# connection has actually produced an account to name.
+ACCOUNT_HEADER = "chatgpt-account-id"
 
 
 def _require_admin() -> None:
@@ -223,15 +240,81 @@ def _auth_block(engine, include_secrets=False):
     return auth
 
 
+def _backend_shape(engine) -> dict:
+    """What the engine's OAuth provider requires of the backend it authenticates to.
+
+    An engine with no provider has no such requirements and is exported exactly
+    as it was configured: the Codex wire quirks are facts about one backend, not
+    about every engine Helpdesk describes.
+    """
+    if not engine.get("auth_oauth_provider"):
+        return {}
+    backend = frappe.db.get_value(
+        "HD AI OAuth Provider", engine.auth_oauth_provider, BACKEND_FIELDS, as_dict=True
+    )
+    return backend or {}
+
+
+def _layered(configured, required):
+    """Lay an engine's own block over the one its backend requires.
+
+    The backend's block is a default rather than an override. An administrator
+    who typed a value meant it, and the two contradictions that would actually
+    break the Codex backend are refused when the engine is saved — where somebody
+    is watching — instead of being rewritten here where nobody would see it.
+    `extra` is merged a level deeper, because it is a bag of unrelated keys and
+    replacing the whole bag would drop settings neither side is arguing about.
+    """
+    block = dict(required or {})
+    for key, value in (configured or {}).items():
+        if key == "extra" and isinstance(value, dict) and isinstance(block.get("extra"), dict):
+            block["extra"] = {**block["extra"], **value}
+        else:
+            block[key] = value
+    return block
+
+
+def _backend_headers(configured, required, account_id):
+    """Every header the backend needs, with the engine's own copy of one winning.
+
+    A connection that produced no account id exports no account header: the
+    Codex backend refuses a request without one, and a header naming nothing at
+    all fails the same way while looking configured.
+    """
+    headers = list(configured or [])
+    named = {row.get("name") for row in headers if isinstance(row, dict)}
+    for row in required or []:
+        if isinstance(row, dict) and row.get("name") not in named:
+            headers.append(row)
+            named.add(row.get("name"))
+    if account_id and ACCOUNT_HEADER not in named:
+        headers.append({"name": ACCOUNT_HEADER, "value": account_id})
+    return headers
+
+
 def _provider(engine, include_secrets=False):
     """Describe one engine as a raphain ProviderConfig, without null keys."""
+    backend = _backend_shape(engine)
     provider = {"name": engine.engine_name, "kind": engine.kind, "model": engine.model}
-    if engine.base_url:
-        provider["base_url"] = engine.base_url
+    base_url = engine.base_url or backend.get("engine_base_url")
+    if base_url:
+        provider["base_url"] = base_url
     for fieldname in DOCUMENT_FIELDS:
         document = _stored_document(engine.get(fieldname))
         if document:
             provider[fieldname] = document
+    if backend:
+        headers = _backend_headers(
+            provider.get("headers"),
+            _stored_document(backend.get("engine_headers")),
+            engine.get("auth_account_id"),
+        )
+        if headers:
+            provider["headers"] = headers
+        for key, fieldname in (("options", "engine_options"), ("parameters", "engine_parameters")):
+            block = _layered(provider.get(key), _stored_document(backend.get(fieldname)))
+            if block:
+                provider[key] = block
     auth = _auth_block(engine, include_secrets=include_secrets)
     if auth:
         provider["auth"] = auth
