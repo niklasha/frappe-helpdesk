@@ -133,40 +133,197 @@
         </template>
         <template v-if="isOAuth">
           <FormControl
-            v-model="engine.auth_access_token_env"
-            type="text"
-            :label="__('Access token environment variable')"
-            :placeholder="__('OPENAI_OAUTH_TOKEN')"
+            v-model="engine.auth_oauth_provider"
+            type="select"
+            :label="__('OAuth provider')"
+            :options="providerOptions"
             :description="
               __(
-                'The access token is read from this environment variable at run time.'
+                'Bound to a provider, Helpdesk obtains the token itself and keeps it refreshed.'
               )
             "
           />
-          <FormControl
-            v-model="engine.auth_access_token"
-            type="password"
-            :label="__('Access token')"
-            :placeholder="__('ya29....')"
-            :description="
-              __(
-                'Stored on the site instead of an environment variable. Give one or the other, never both.'
-              )
-            "
-          />
-          <FormControl
-            v-model="engine.auth_refresh_token_env"
-            type="text"
-            :label="__('Refresh token environment variable')"
-            :placeholder="__('OPENAI_OAUTH_REFRESH')"
-          />
-          <FormControl
-            v-model="engine.auth_expires_at_unix"
-            type="number"
-            :label="__('Access token expires at (unix)')"
-            :placeholder="__('1735689600')"
-            :description="__('Leave empty when the token does not expire.')"
-          />
+          <!-- Connecting spends a grant against the saved engine, so it only
+               opens once the binding on screen is the binding on the site. -->
+          <div
+            v-if="canConnect"
+            class="flex flex-col gap-3 rounded border border-outline-gray-2 p-3"
+          >
+            <div class="flex items-center justify-between">
+              <span class="text-base-medium text-ink-gray-7">
+                {{ __("Connection") }}
+              </span>
+              <Badge :label="statusLabel" :theme="statusTheme" />
+            </div>
+            <div
+              v-if="connection.data?.account_id"
+              class="text-p-sm text-ink-gray-6"
+            >
+              {{ __("Account") }}: {{ connection.data.account_id }}
+            </div>
+            <div v-if="expiresAt" class="text-p-sm text-ink-gray-6">
+              {{ __("Access token expires") }}: {{ expiresAt }}
+            </div>
+            <FormControl
+              v-if="offeredModes.length > 1"
+              v-model="mode"
+              type="select"
+              :label="__('How to authorize')"
+              :options="offeredModes"
+            />
+            <!-- Every button here is type="button": inside the form, a button
+                 with no type submits it, and connecting is not saving. -->
+            <div class="flex gap-2">
+              <Button
+                type="button"
+                :label="isConnected ? __('Reconnect') : __('Connect')"
+                theme="gray"
+                variant="subtle"
+                :loading="beginAuthorization.loading"
+                @click="beginAuthorization.submit()"
+              />
+              <Button
+                v-if="isConnected"
+                type="button"
+                :label="__('Disconnect')"
+                theme="gray"
+                variant="ghost"
+                :loading="disconnectEngine.loading"
+                @click="disconnectEngine.submit()"
+              />
+            </div>
+            <template v-if="pending">
+              <a
+                v-if="pending.authorize_url"
+                class="text-p-sm text-ink-blue-3 underline w-fit"
+                :href="pending.authorize_url"
+                target="_blank"
+                rel="noopener"
+              >
+                {{ __("Open the approval page again") }}
+              </a>
+              <!-- The provider sends the browser back to this site, which
+                   finishes the grant server-side; nothing is left to type. -->
+              <template v-if="pending.mode === 'redirect'">
+                <div class="text-p-sm text-ink-gray-6">
+                  {{
+                    __(
+                      "Approve in the tab that opened. Helpdesk stores the token when the provider sends the browser back."
+                    )
+                  }}
+                </div>
+                <Button
+                  type="button"
+                  :label="__('Check connection')"
+                  theme="gray"
+                  variant="subtle"
+                  :loading="connection.loading"
+                  @click="checkConnection()"
+                />
+              </template>
+              <!-- The Codex client redirects to a port on the administrator's
+                   own machine, so the address bar is the only way back. -->
+              <template v-else-if="pending.mode === 'loopback_paste'">
+                <FormControl
+                  v-model="landedUrl"
+                  type="text"
+                  :label="__('Address the browser landed on')"
+                  :placeholder="__('http://localhost:1455/auth/callback?code=...')"
+                  :description="
+                    __(
+                      'Approve in the tab that opened, then copy the whole address here, even if that page failed to load.'
+                    )
+                  "
+                />
+                <Button
+                  type="button"
+                  :label="__('Complete connection')"
+                  theme="gray"
+                  variant="subtle"
+                  :loading="completeConnection.loading"
+                  @click="completeConnection.submit()"
+                />
+              </template>
+              <template v-else>
+                <div class="text-p-sm text-ink-gray-6">
+                  {{ __("Enter this code at") }}
+                  <a
+                    class="text-ink-blue-3 underline"
+                    :href="pending.verification_uri"
+                    target="_blank"
+                    rel="noopener"
+                    >{{ pending.verification_uri }}</a
+                  >: <span class="font-mono">{{ pending.user_code }}</span>
+                </div>
+                <Button
+                  type="button"
+                  :label="__('I have approved it')"
+                  theme="gray"
+                  variant="subtle"
+                  :loading="pollDevice.loading"
+                  @click="pollDevice.submit()"
+                />
+              </template>
+            </template>
+            <ErrorMessage :message="connectError" />
+          </div>
+          <div
+            v-else-if="engine.auth_oauth_provider"
+            class="text-p-sm text-ink-gray-5"
+          >
+            {{ __("Save the engine to authorize it against this provider.") }}
+          </div>
+          <button
+            type="button"
+            class="text-p-sm text-ink-gray-6 underline w-fit"
+            @click="showTokenFields = !showTokenFields"
+          >
+            {{
+              showTokenFields
+                ? __("Hide the token fields")
+                : __("Set the tokens by hand")
+            }}
+          </button>
+          <template v-if="showTokenFields">
+            <FormControl
+              v-model="engine.auth_access_token_env"
+              type="text"
+              :label="__('Access token environment variable')"
+              :placeholder="__('OPENAI_OAUTH_TOKEN')"
+              :description="
+                __(
+                  'The access token is read from this environment variable at run time.'
+                )
+              "
+            />
+            <FormControl
+              v-model="engine.auth_access_token"
+              type="password"
+              :label="__('Access token')"
+              :placeholder="__('ya29....')"
+              :description="
+                __(
+                  'Stored on the site instead of an environment variable. Give one or the other, never both.'
+                )
+              "
+            />
+            <FormControl
+              v-model="engine.auth_refresh_token_env"
+              type="text"
+              :label="__('Refresh token environment variable')"
+              :placeholder="__('OPENAI_OAUTH_REFRESH')"
+            />
+            <!-- With a provider bound, the expiry is written by the grant and
+                 by every refresh, so it is reported above rather than typed. -->
+            <FormControl
+              v-if="!engine.auth_oauth_provider"
+              v-model="engine.auth_expires_at_unix"
+              type="number"
+              :label="__('Access token expires at (unix)')"
+              :placeholder="__('1735689600')"
+              :description="__('Leave empty when the token does not expire.')"
+            />
+          </template>
         </template>
         <FormControl
           v-model="engine.enabled"
@@ -213,6 +370,18 @@ const authTypeOptions = ["none", "api_key", "bearer", "oauth"];
 
 const KEYED_AUTH_TYPES = ["api_key", "bearer"];
 
+// The same three flags the server reads off the provider, in the same order it
+// reports them, so a page and a refusal never disagree about what is on offer.
+const MODE_FLAGS: Record<string, string> = {
+  redirect: "supports_redirect",
+  loopback_paste: "supports_loopback_paste",
+  device_code: "supports_device_code",
+};
+
+// A refusal carries a machine tag for callers that switch on the reason. The
+// person reading this dialog only needs the sentence in front of it.
+const REFUSAL_TAG = /\s*\[hd-oauth:[a-z_]+\]\s*$/;
+
 const emptyEngine = () => ({
   engine_name: "",
   kind: "openai",
@@ -221,6 +390,7 @@ const emptyEngine = () => ({
   auth_type: "none",
   auth_env: "",
   auth_secret: "",
+  auth_oauth_provider: "",
   auth_access_token_env: "",
   auth_access_token: "",
   auth_refresh_token_env: "",
@@ -233,6 +403,14 @@ const showDialog = ref(false);
 const isNew = ref(true);
 const engine = ref(emptyEngine());
 const saveError = ref("");
+// The provider the engine is bound to on the site, which is not always the one
+// on screen: a binding only picked in the dialog has nothing to authorize yet.
+const boundTo = ref("");
+const showTokenFields = ref(false);
+const mode = ref("");
+const pending = ref<Record<string, any> | null>(null);
+const landedUrl = ref("");
+const connectError = ref("");
 
 // raphain shapes OAuth differently from api_key/bearer: it carries token
 // references rather than a single secret, so the two sets never mix.
@@ -251,6 +429,7 @@ const engines = createListResource({
     "base_url",
     "auth_type",
     "auth_env",
+    "auth_oauth_provider",
     "auth_access_token_env",
     "auth_refresh_token_env",
     "auth_expires_at_unix",
@@ -261,6 +440,67 @@ const engines = createListResource({
   orderBy: "modified desc",
   start: 0,
   pageLength: 99,
+});
+
+// The provider list comes from the OAuth module rather than the doctype,
+// because that endpoint already leaves the client secret out of every row.
+const oauthProviders = createResource({
+  url: "helpdesk.api.ai_oauth.list_providers",
+  auto: true,
+});
+
+const providerOptions = computed(() => [
+  { label: __("None"), value: "" },
+  ...(oauthProviders.data || []).map((row: Record<string, any>) => ({
+    label: row.provider_name,
+    value: row.provider_name,
+  })),
+]);
+
+const chosenProvider = computed(() =>
+  (oauthProviders.data || []).find(
+    (row: Record<string, any>) => row.provider_name === engine.value.auth_oauth_provider
+  )
+);
+
+// begin_authorization refuses to guess when a provider offers more than one way
+// in, so the page names the mode out of the flags it has already been given.
+const offeredModes = computed(() =>
+  Object.keys(MODE_FLAGS).filter((name) =>
+    Boolean(chosenProvider.value?.[MODE_FLAGS[name]])
+  )
+);
+
+const canConnect = computed(
+  () => !isNew.value && Boolean(boundTo.value) && boundTo.value === engine.value.auth_oauth_provider
+);
+
+const connection = createResource({
+  url: "helpdesk.api.ai_oauth.connection_status",
+  makeParams: () => ({ engine_name: engine.value.engine_name }),
+  auto: false,
+});
+
+const isConnected = computed(() =>
+  ["connected", "expired"].includes(connection.data?.status)
+);
+
+const statusLabel = computed(() => {
+  const status = connection.data?.status;
+  if (status === "connected") return __("Connected");
+  if (status === "expired") return __("Expired");
+  return __("Not connected");
+});
+
+const statusTheme = computed(() => {
+  const status = connection.data?.status;
+  if (status === "connected") return "green";
+  return status === "expired" ? "amber" : "gray";
+});
+
+const expiresAt = computed(() => {
+  const seconds = connection.data?.expires_at_unix;
+  return seconds ? new Date(seconds * 1000).toLocaleString() : "";
 });
 
 function openDialog(row?: Record<string, any>) {
@@ -276,6 +516,7 @@ function openDialog(row?: Record<string, any>) {
         // Secrets are never listed back, so they stay blank and are only sent
         // when the administrator types a new one.
         auth_secret: "",
+        auth_oauth_provider: row.auth_oauth_provider || "",
         auth_access_token_env: row.auth_access_token_env || "",
         auth_access_token: "",
         auth_refresh_token_env: row.auth_refresh_token_env || "",
@@ -285,7 +526,23 @@ function openDialog(row?: Record<string, any>) {
       }
     : emptyEngine();
   saveError.value = "";
+  boundTo.value = engine.value.auth_oauth_provider;
+  // An engine that obtains its own token has no use for the token boxes, so
+  // they start folded away and stay one click from an administrator who needs
+  // them anyway.
+  showTokenFields.value = !boundTo.value;
+  forgetGrant();
+  mode.value = "";
+  connection.data = null;
+  if (canConnect.value) connection.fetch();
   showDialog.value = true;
+}
+
+/** Drop whatever is left of a half-finished authorization. */
+function forgetGrant() {
+  pending.value = null;
+  landedUrl.value = "";
+  connectError.value = "";
 }
 
 /**
@@ -332,12 +589,18 @@ const saveEngine = createResource({
       params.auth_secret = "";
     }
     if (isOAuth.value) {
+      params.auth_oauth_provider = values.auth_oauth_provider;
       params.auth_access_token_env = values.auth_access_token_env;
       params.auth_refresh_token_env = values.auth_refresh_token_env;
-      params.auth_expires_at_unix = Number(values.auth_expires_at_unix) || 0;
       if (values.auth_access_token)
         params.auth_access_token = values.auth_access_token;
+      // The expiry of a provider-bound engine is the grant's to write. Sending
+      // back what the dialog was opened with would undo a refresh that ran
+      // while it was open.
+      if (!values.auth_oauth_provider)
+        params.auth_expires_at_unix = Number(values.auth_expires_at_unix) || 0;
     } else {
+      params.auth_oauth_provider = "";
       params.auth_access_token_env = "";
       params.auth_access_token = "";
       params.auth_refresh_token_env = "";
@@ -361,6 +624,91 @@ const saveEngine = createResource({
     // still there to correct.
     saveError.value = errorReason(error, __("Could not save the AI engine"));
     toast.error(saveError.value);
+  },
+});
+
+/** The reason a refusal gave, without the tag it carries for machines. */
+function refusalReason(error: any, fallback: string): string {
+  return errorReason(error, fallback).replace(REFUSAL_TAG, "");
+}
+
+function checkConnection() {
+  connection.fetch();
+}
+
+/** One grant has ended in a token: the panel now speaks for the engine again. */
+function connectionMade() {
+  forgetGrant();
+  toast.success(__("AI engine connected"));
+  connection.fetch();
+}
+
+const beginAuthorization = createResource({
+  url: "helpdesk.api.ai_oauth.begin_authorization",
+  makeParams: () => ({
+    engine_name: engine.value.engine_name,
+    // Named only when the provider offers a choice, so a provider with one way
+    // in keeps working if its flags change under us.
+    mode: offeredModes.value.length > 1 ? mode.value || offeredModes.value[0] : null,
+  }),
+  auto: false,
+  onSuccess(data: Record<string, any>) {
+    forgetGrant();
+    pending.value = data;
+    // Only the address the provider's own record built is ever opened: a URL
+    // this page composed would be Helpdesk vouching for wherever it pointed.
+    if (data.authorize_url) window.open(data.authorize_url, "_blank", "noopener");
+  },
+  onError(error) {
+    pending.value = null;
+    connectError.value = refusalReason(error, __("Could not start the authorization"));
+  },
+});
+
+const completeConnection = createResource({
+  url: "helpdesk.api.ai_oauth.complete_from_redirect_url",
+  makeParams: () => ({ grant: pending.value?.grant, redirect_url: landedUrl.value }),
+  validate(params) {
+    if (!params.redirect_url) return __("Paste the address the browser landed on");
+  },
+  auto: false,
+  onSuccess: connectionMade,
+  onError(error) {
+    // The grant is spent either way, so the panel goes back to offering a new
+    // authorization rather than a second paste into a dead one.
+    pending.value = null;
+    connectError.value = refusalReason(error, __("Could not complete the authorization"));
+  },
+});
+
+const pollDevice = createResource({
+  url: "helpdesk.api.ai_oauth.poll_device_authorization",
+  makeParams: () => ({ grant: pending.value?.grant }),
+  auto: false,
+  onSuccess(data: Record<string, any>) {
+    if (data.status === "authorization_pending") {
+      connectError.value = __("Nobody has approved this code yet. Try again in a moment.");
+      return;
+    }
+    connectionMade();
+  },
+  onError(error) {
+    pending.value = null;
+    connectError.value = refusalReason(error, __("Could not complete the authorization"));
+  },
+});
+
+const disconnectEngine = createResource({
+  url: "helpdesk.api.ai_oauth.disconnect_engine",
+  makeParams: () => ({ engine_name: engine.value.engine_name }),
+  auto: false,
+  onSuccess() {
+    forgetGrant();
+    toast.success(__("AI engine disconnected"));
+    connection.fetch();
+  },
+  onError(error) {
+    connectError.value = refusalReason(error, __("Could not disconnect the engine"));
   },
 });
 </script>
