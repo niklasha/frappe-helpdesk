@@ -8,6 +8,8 @@ from helpdesk.api import ai_generation
 from helpdesk.utils import agent_only
 
 
+DEFAULT_WORKING_LANGUAGE = "sv"
+
 LANGUAGE_MARKERS = {
     "sv": ("och", "att", "för", "med", "beställning", "tack", "hej"),
     "en": ("the", "and", "please", "order", "thanks", "hello"),
@@ -33,6 +35,48 @@ def detect_language_code(text):
 def detect_language(text: str) -> str | None:
     """Return the detected language code of a message, or None when unclear."""
     return detect_language_code(text)
+
+
+@frappe.whitelist()
+@agent_only
+def get_working_language() -> str:
+    """Return the language agents read tickets and write replies in.
+
+    The Kravspec says Swedish, and Swedish is what a site ships with. It is
+    still a setting: a helpdesk that opens a second desk, or is sold on, changes
+    one value rather than four literals across two modules — and a reply
+    recorded as written in a language the agent does not work in mislabels the
+    original LANG-03 requires stays available.
+    """
+    return (
+        frappe.db.get_single_value("HD Settings", "working_language")
+        or DEFAULT_WORKING_LANGUAGE
+    )
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def set_working_language(language_code: str) -> str:
+    """Move the whole helpdesk to another working language."""
+    from helpdesk.api.ai_runner import is_admin
+
+    if not is_admin():
+        frappe.throw(
+            _("Only an administrator may change the working language."),
+            frappe.PermissionError,
+        )
+    # An unsupported working language does not degrade translation, it refuses
+    # every message in both directions.
+    if not frappe.db.exists(
+        "HD Supported Language", {"language_code": language_code, "enabled": 1}
+    ):
+        frappe.throw(
+            _("{0} is not an enabled language, so the helpdesk cannot work in it.").format(
+                language_code
+            )
+        )
+    frappe.db.set_single_value("HD Settings", "working_language", language_code)
+    return language_code
 
 
 def _validate_supported_language(language_code):
@@ -114,18 +158,22 @@ def translate_inbound(
     ticket_id: str,
     original_text: str,
     translated_text: str | None = None,
-    target_language: str = "sv",
+    target_language: str | None = None,
     provider: str | None = None,
     model_version: str | None = None,
     prompt_version: str | int | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
-    """Record the Swedish translation of a message a customer sent us."""
+    """Record the translation of a message a customer sent us.
+
+    An unstated target is the language this helpdesk works in, which is what an
+    inbound translation is for: putting the message in front of an agent.
+    """
     return record_translation(
         ticket_id=ticket_id,
         original_text=original_text,
         translated_text=translated_text,
-        target_language=target_language,
+        target_language=target_language or get_working_language(),
         direction="Inbound",
         provider=provider,
         model_version=model_version,
@@ -169,7 +217,7 @@ def _generated_translation(original_text, source_language, target_language, prom
 def generate_inbound_translation(
     ticket_id: str,
     original_text: str,
-    target_language: str = "sv",
+    target_language: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
     """Translate a message a customer sent us, and record it beside the original.
@@ -186,6 +234,7 @@ def generate_inbound_translation(
     if stored:
         return frappe.get_doc("HD Message Translation", stored).as_dict()
     source_language = detect_language_code(original_text)
+    target_language = target_language or get_working_language()
     _validate_supported_language(source_language)
     _validate_supported_language(target_language)
     text, generation = _generated_translation(
@@ -233,7 +282,7 @@ def translate_outbound(
         ticket_id=ticket_id,
         original_text=original_text,
         translated_text=translated_text,
-        source_language="sv",
+        source_language=get_working_language(),
         target_language=target_language or _ticket_customer_language(ticket_id),
         direction="Outbound",
         provider=provider,
@@ -274,7 +323,10 @@ def generate_outbound_translation(
         )
     _validate_supported_language(target_language)
     text, generation = _generated_translation(
-        original_text, "sv", target_language, ai_generation.TRANSLATION_OUTBOUND
+        original_text,
+        get_working_language(),
+        target_language,
+        ai_generation.TRANSLATION_OUTBOUND,
     )
     result = translate_outbound(
         ticket_id=ticket_id,

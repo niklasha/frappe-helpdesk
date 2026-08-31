@@ -8,6 +8,7 @@
  "field_order": [
   "priority_section",
   "default_priority",
+  "working_language",
   "column_break_nvbf",
   "agent_groups_section",
   "restrict_tickets_by_agent_group",
@@ -240,6 +241,13 @@
    "fieldtype": "Link",
    "label": "Default priority",
    "options": "HD Ticket Priority"
+  },
+  {
+   "fieldname": "working_language",
+   "fieldtype": "Link",
+   "label": "Working Language",
+   "options": "HD Supported Language",
+   "description": "The language agents read tickets and write replies in."
   },
   {
    "fieldname": "column_break_nvbf",
@@ -510,7 +518,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "default": "Thanks for reaching out \ud83d\udc4b. This ticket was created outside our working hours. You can expect the next response by {{ next_working_day }}.",
+   "default": "Thanks for reaching out 👋. This ticket was created outside our working hours. You can expect the next response by {{ next_working_day }}.",
    "depends_on": "enable_outside_hours_banner",
    "fieldname": "outside_working_hours_message",
    "fieldtype": "Small Text",
