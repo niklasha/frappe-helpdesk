@@ -9,7 +9,8 @@ from helpdesk.utils import agent_only
 TRIAGE_SCHEMA = (
     "Use these keys and no others: classification (what the message is about), "
     "priority (Low, Medium, High or Urgent), suggested_agent (an email "
-    "address), confidence (0 to 1), rationale, summary, missing_information, "
+    "address), confidence (0 to 1), rationale, summary, missing_information "
+    "(one sentence naming what the customer has not told us, not a list), "
     "complaint (true or false), repeat_order (true or false)."
 )
 
@@ -28,6 +29,38 @@ TRIAGE_FIELDS = (
 TRIAGE_LINKS = {"priority": "HD Ticket Priority", "suggested_agent": "User"}
 
 DEFAULT_CONFIDENCE_THRESHOLD = 0.7
+
+
+# Fields that are prose in the record and that a model readily answers with a
+# list instead — reasonably, since "what is missing" is naturally several things.
+PROSE_FIELDS = ("missing_information", "rationale", "summary", "classification")
+
+
+def _as_prose(value):
+    """Flatten a listed answer into the sentence the record can hold.
+
+    Frappe refuses a list for a Small Text field outright, and the refusal takes
+    the whole triage down — the ticket ends up with no triage at all rather than
+    one field in an awkward shape. Since what the model listed is exactly what an
+    agent has to go and ask the customer for, none of it may be dropped either.
+
+    The schema now asks for a sentence, which makes this rare. It does not make
+    it impossible: the answer is a document somebody else wrote.
+    """
+    if isinstance(value, (list, tuple)):
+        parts = [str(item).strip() for item in value if str(item).strip()]
+        return ", ".join(parts) or None
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
+def _prose_values(proposal: dict) -> dict:
+    """Put every prose field into a shape its own field can store."""
+    return {
+        field: _as_prose(value) if field in PROSE_FIELDS else value
+        for field, value in proposal.items()
+    }
 
 
 def _linked_values(proposal: dict) -> dict:
@@ -145,7 +178,7 @@ def triage_ticket(
         TRIAGE_FIELDS,
     )
     proposal = _linked_values(
-        {field: answer[field] for field in TRIAGE_FIELDS if field in answer}
+        _prose_values({field: answer[field] for field in TRIAGE_FIELDS if field in answer})
     )
     if confidence_threshold is None:
         confidence_threshold = DEFAULT_CONFIDENCE_THRESHOLD
