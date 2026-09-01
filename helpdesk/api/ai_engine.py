@@ -123,6 +123,11 @@ def upsert_engine(
         doc.engine_name = engine_name
     if kind is not None:
         doc.kind = kind
+        # The controller refuses a dialect its provider does not speak, but only
+        # when a caller named one. A stored value overtaken by its provider is
+        # corrected instead — and only this flag can tell the two apart, because
+        # by validate() time both look like doc.kind.
+        doc.flags.kind_stated = True
     if model is not None:
         doc.model = model
     if base_url is not None:

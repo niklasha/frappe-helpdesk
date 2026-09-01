@@ -155,12 +155,29 @@ class HDAIEngine(Document):
             # "openai_responses" is the Responses API. OpenAI has retired the
             # former, so the wrong kind here sends every request to a path the
             # backend does not serve — and the form lists "openai" first.
-            refuse(
-                "kind_conflict",
-                _("{0} speaks {1}, not {2}.").format(
-                    self.auth_oauth_provider, provider.engine_kind, self.kind
-                ),
-            )
+            #
+            # A caller that named the dialect is told it is wrong. A stored value
+            # is not: the disagreement can appear without anybody touching the
+            # engine, because a provider's engine_kind can be set under engines
+            # already bound to it — which is exactly what the Wave 10 backfill
+            # did. Those engines then could not be saved by the settings page,
+            # whose Kind field is locked and so offers no cure, nor by the OAuth
+            # grant, which saves the engine as its last step. Refusing there
+            # locks out the one action that repairs the engine, so the provider's
+            # value is taken instead; the rule permits no other value anyway.
+            #
+            # Saved straight through the desk there is no flag, and such a save
+            # is corrected rather than refused. That is the safer default for a
+            # path that cannot know better: being locked out is worse than being
+            # put right.
+            if self.flags.get("kind_stated") or self.is_new():
+                refuse(
+                    "kind_conflict",
+                    _("{0} speaks {1}, not {2}.").format(
+                        self.auth_oauth_provider, provider.engine_kind, self.kind
+                    ),
+                )
+            self.kind = provider.engine_kind
         if provider.engine_base_url and self.base_url and self.base_url != provider.engine_base_url:
             refuse(
                 "base_url_conflict",
