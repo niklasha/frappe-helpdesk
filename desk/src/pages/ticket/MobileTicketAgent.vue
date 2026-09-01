@@ -112,6 +112,10 @@
                     <TicketSLA />
                   </div>
                 </template>
+                <!-- AIAN-13: the proposal belongs above the read-only rows, in
+                     the same Contact → SLA → Triage order the desktop tab has.
+                     It hides itself when the ticket has no triage record. -->
+                <TicketAITriage />
                 <div
                   class="flex items-center border-b px-6 py-3 text-base leading-5"
                 >
@@ -141,19 +145,25 @@
               </div>
 
               <!-- Rest Activities -->
-              <TicketAgentActivities
-                v-else
-                ref="ticketAgentActivitiesRef"
-                :activities="filterActivities(tab.name)"
-                :title="tab.label"
-                :ticket-status="ticket.doc?.status"
-                @update="() => reloadTicket(props.ticketId)"
-                @email:reply="
-                  (e) => {
-                    communicationAreaRef.replyToEmail(e);
-                  }
-                "
-              />
+              <template v-else>
+                <!-- LANG-03: only where the customer's own message is read, so
+                     the comment and call tabs are left alone. -->
+                <TicketTranslation
+                  v-if="tab.name === 'activity' || tab.name === 'email'"
+                />
+                <TicketAgentActivities
+                  ref="ticketAgentActivitiesRef"
+                  :activities="filterActivities(tab.name)"
+                  :title="tab.label"
+                  :ticket-status="ticket.doc?.status"
+                  @update="() => reloadTicket(props.ticketId)"
+                  @email:reply="
+                    (e) => {
+                      communicationAreaRef.replyToEmail(e);
+                    }
+                  "
+                />
+              </template>
             </template>
           </Tabs>
           <CommunicationArea
@@ -257,7 +267,9 @@ import CustomActions from "@/components/CustomActions.vue";
 import AssignTo from "@/components/ticket-agent/AssignTo.vue";
 import SetContactPhoneModal from "@/components/ticket/SetContactPhoneModal.vue";
 import TicketSLA from "@/components/ticket-agent/TicketSLA.vue";
+import TicketAITriage from "@/components/ticket-agent/TicketAITriage.vue";
 import TicketAgentFields from "@/components/ticket/TicketAgentFields.vue";
+import TicketTranslation from "./TicketTranslation.vue";
 import {
   parseField,
   setupCustomizations,

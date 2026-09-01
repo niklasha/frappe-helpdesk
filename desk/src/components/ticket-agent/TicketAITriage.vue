@@ -1,6 +1,8 @@
 <template>
   <div v-if="triage.data" class="flex flex-col gap-2.5 border-b px-6 py-3 sm:px-0">
-    <div class="flex items-center gap-2">
+    <!-- Label plus two badges does not fit one line on a phone; wrapping keeps
+         them all readable instead of pushing the last one off the edge. -->
+    <div class="flex flex-wrap items-center gap-2">
       <SparklesIcon class="h-4 w-4 text-ink-gray-5" />
       <span class="text-base-medium text-ink-gray-7">{{ __("AI:s förslag") }}</span>
       <!-- A proposal presented as a decision is a different product from the one
@@ -48,12 +50,12 @@
            this since Wave 2 and nothing ever showed it. -->
       <div v-if="triage.data.rationale">
         <dt class="text-sm text-ink-gray-5">{{ __("Varför") }}</dt>
-        <dd class="text-sm text-ink-gray-7">{{ triage.data.rationale }}</dd>
+        <dd class="break-words text-sm text-ink-gray-7">{{ triage.data.rationale }}</dd>
       </div>
 
       <div v-if="triage.data.missing_information">
         <dt class="text-sm text-ink-gray-5">{{ __("Saknas i beställningen") }}</dt>
-        <dd class="text-sm text-ink-gray-7">{{ triage.data.missing_information }}</dd>
+        <dd class="break-words text-sm text-ink-gray-7">{{ triage.data.missing_information }}</dd>
       </div>
     </dl>
 
@@ -81,11 +83,13 @@ const triage = createResource({
   url: "helpdesk.api.ai_triage.ticket_triage",
   // No auto: at mount the injected ticket may not exist yet, and the request
   // would go out with an empty body and never be retried.
-  makeParams: () => ({ ticket_id: ticket.doc?.name }),
+  makeParams: () => ({ ticket_id: ticket.value?.doc?.name }),
 });
 
 watch(
-  () => ticket.doc?.name,
+  // The symbol carries a ComputedRef, so script scope has to unwrap it; reading
+  // `.doc` off the ref itself is undefined forever and the fetch never fires.
+  () => ticket.value?.doc?.name,
   (name) => {
     if (name) triage.fetch();
   },

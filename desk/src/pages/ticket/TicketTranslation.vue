@@ -3,8 +3,10 @@
     v-if="inbound"
     class="mx-5 md:mx-10 mt-4 rounded border border-outline-gray-2 bg-surface-gray-1 px-4 py-3"
   >
-    <div class="flex items-center gap-2">
-      <LanguagesIcon class="h-4 w-4 text-ink-gray-5" />
+    <!-- On a phone the sentence and the button do not share a line; wrapping is
+         what keeps the toggle reachable instead of squeezed to a stub. -->
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <LanguagesIcon class="h-4 w-4 shrink-0 text-ink-gray-5" />
       <span class="text-sm text-ink-gray-6">
         {{
           __("Ärendet kom på {0} och har översatts.").replace(
@@ -16,7 +18,7 @@
       <!-- LANG-03: the original must always be available, which means one click
            away and labelled — not merely present in a record somewhere. -->
       <Button
-        class="ms-auto"
+        class="ms-auto shrink-0"
         variant="ghost"
         size="sm"
         :label="showOriginal ? __('Visa översättning') : __('Visa original')"
@@ -24,7 +26,7 @@
       />
     </div>
 
-    <p class="mt-2 whitespace-pre-line text-base text-ink-gray-8">
+    <p class="mt-2 whitespace-pre-line break-words text-base text-ink-gray-8">
       {{ showOriginal ? inbound.original_text : inbound.translated_text }}
     </p>
 
@@ -49,7 +51,7 @@ const translations = createResource({
   url: "helpdesk.api.translation.ticket_translations",
   // No auto, for the same reason as the triage panel: the ticket is injected
   // and may arrive after this component does.
-  makeParams: () => ({ ticket_id: ticket.doc?.name }),
+  makeParams: () => ({ ticket_id: ticket.value?.doc?.name }),
 });
 
 const languages = createResource({
@@ -58,7 +60,9 @@ const languages = createResource({
 });
 
 watch(
-  () => ticket.doc?.name,
+  // The symbol carries a ComputedRef, so script scope has to unwrap it; reading
+  // `.doc` off the ref itself is undefined forever and the fetch never fires.
+  () => ticket.value?.doc?.name,
   (name) => {
     if (name) translations.fetch();
   },
