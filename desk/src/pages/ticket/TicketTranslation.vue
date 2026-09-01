@@ -47,8 +47,9 @@ const showOriginal = ref(false);
 
 const translations = createResource({
   url: "helpdesk.api.translation.ticket_translations",
+  // No auto, for the same reason as the triage panel: the ticket is injected
+  // and may arrive after this component does.
   makeParams: () => ({ ticket_id: ticket.doc?.name }),
-  auto: true,
 });
 
 const languages = createResource({
@@ -58,7 +59,10 @@ const languages = createResource({
 
 watch(
   () => ticket.doc?.name,
-  (name) => name && translations.reload()
+  (name) => {
+    if (name) translations.fetch();
+  },
+  { immediate: true }
 );
 
 // The inbound one: what the customer wrote and an agent has to read. The

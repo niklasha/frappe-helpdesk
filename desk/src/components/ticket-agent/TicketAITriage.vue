@@ -79,13 +79,17 @@ const ticket = inject(TicketSymbol)!;
 
 const triage = createResource({
   url: "helpdesk.api.ai_triage.ticket_triage",
+  // No auto: at mount the injected ticket may not exist yet, and the request
+  // would go out with an empty body and never be retried.
   makeParams: () => ({ ticket_id: ticket.doc?.name }),
-  auto: true,
 });
 
 watch(
   () => ticket.doc?.name,
-  (name) => name && triage.reload()
+  (name) => {
+    if (name) triage.fetch();
+  },
+  { immediate: true }
 );
 
 // AIAN-12: below the threshold the proposal is not one to act on, and the panel
