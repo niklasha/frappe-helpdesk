@@ -7,6 +7,10 @@
       <TicketContact />
       <TicketSLA />
       <TicketAITriage />
+      <!-- Only speaks for a ticket raised through the portal, whose description
+           arrived as a field rather than as an email. Everything that came in as
+           a message is translated inside that message, down in the thread. -->
+      <TicketTranslation />
     </div>
 
     <!-- Scrollable sections: Key Info + Ticket Info + Recent / Similar Tickets -->
@@ -174,6 +178,7 @@ import AssignTo from "./AssignTo.vue";
 import TicketContact from "./TicketContact.vue";
 import TicketFeedback from "./TicketFeedback.vue";
 import TicketAITriage from "./TicketAITriage.vue";
+import TicketTranslation from "@/pages/ticket/TicketTranslation.vue";
 import TicketSLA from "./TicketSLA.vue";
 
 const ticket = inject(TicketSymbol)!;
