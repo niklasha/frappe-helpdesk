@@ -159,16 +159,7 @@ def translate_message(message: str) -> dict:
     # description, so translating this message would buy the same sentence
     # twice and show it twice. Adopting that translation costs nothing and is
     # what makes the opening email render like every later one.
-    adopted = frappe.db.get_value(
-        "HD Message Translation",
-        {
-            "ticket": ticket_id,
-            "direction": "Inbound",
-            "original_text": text,
-            "message": ["in", ("", None)],
-        },
-        "name",
-    )
+    adopted = _adoptable(ticket_id, text)
     if adopted:
         frappe.db.set_value("HD Message Translation", adopted, "message", message)
         done.update(translated=True, reason="adopted the ticket's own translation")
@@ -210,13 +201,24 @@ def run_ingress(ticket_id: str) -> dict:
     # already read. Translating Swedish into Swedish is waste and noise.
     if source and source != working and _is_supported(source):
         try:
-            translation.generate_inbound_translation(
-                ticket_id=ticket_id,
-                original_text=text,
-                target_language=working,
-                idempotency_key=f"ingress-translate-{ticket_id}",
-            )
-            done["translated"] = True
+            # The other half of the adoption in translate_message. Both jobs are
+            # queued when a ticket arrives and nothing orders them, so whichever
+            # runs second has to recognise the first one's work — otherwise the
+            # race decides whether the same words are paid for once or twice.
+            #
+            # Not an early return: the triage below still has to run, and a
+            # translation that was already done is a reason to skip a call, not
+            # a reason to skip the rest of the chain.
+            if _covered_by_message(ticket_id, text):
+                done["translated"] = True
+            else:
+                translation.generate_inbound_translation(
+                    ticket_id=ticket_id,
+                    original_text=text,
+                    target_language=working,
+                    idempotency_key=f"ingress-translate-{ticket_id}",
+                )
+                done["translated"] = True
         except Exception:
             frappe.log_error(
                 title="Helpdesk AI ingress", message=f"translation failed for {ticket_id}"
@@ -246,6 +248,56 @@ def triage_incoming_ticket(ticket_id: str) -> dict:
     automation already ran returns what it produced.
     """
     return run_ingress(ticket_id)
+
+
+def _squashed(text: str) -> str:
+    """Compare texts without letting whitespace decide the answer."""
+    return " ".join((text or "").split())
+
+
+def _adoptable(ticket_id: str, text: str) -> str | None:
+    """An unclaimed translation of these very words, if the ticket has one.
+
+    Matched on the tail rather than on equality. What the ticket carries is
+    `subject + description`, and what the message carries is the description
+    alone — so the two differ by the subject line and an equality test called
+    them different texts. That cost a second model call on every email-opened
+    ticket, and left the band printing what the thread already showed. The
+    live demo found it; a test now holds it.
+    """
+    wanted = _squashed(text)
+    if not wanted:
+        return None
+    for row in frappe.get_all(
+        "HD Message Translation",
+        filters={"ticket": ticket_id, "direction": "Inbound"},
+        fields=["name", "original_text", "message"],
+        order_by="creation asc",
+    ):
+        if row.message:
+            continue
+        if _squashed(row.original_text).endswith(wanted):
+            return row.name
+    return None
+
+
+def _covered_by_message(ticket_id: str, text: str) -> bool:
+    """Has a message on this ticket already been translated with these words?
+
+    The mirror of `_adoptable`: there the ticket's translation is claimed by a
+    message, here a message's translation is what makes the ticket's redundant.
+    """
+    wanted = _squashed(text)
+    if not wanted:
+        return False
+    return any(
+        row.message and wanted.endswith(_squashed(row.original_text))
+        for row in frappe.get_all(
+            "HD Message Translation",
+            filters={"ticket": ticket_id, "direction": "Inbound"},
+            fields=["original_text", "message"],
+        )
+    )
 
 
 def _ticket_text(ticket_id: str) -> str:
