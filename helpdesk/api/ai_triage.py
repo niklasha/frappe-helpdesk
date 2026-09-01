@@ -210,3 +210,57 @@ def correct_triage(
     doc.status = "Corrected"
     doc.save(ignore_permissions=True)
     return doc.as_dict()
+
+
+# What a panel needs to show one proposal. Named here rather than in the
+# component, so the next reader of this record does not invent a slightly
+# different list and a slightly different ordering.
+TRIAGE_VIEW_FIELDS = (
+    "name",
+    "ticket",
+    "classification",
+    "priority",
+    "suggested_agent",
+    "confidence",
+    "confidence_threshold",
+    "requires_human_review",
+    "status",
+    "action",
+    "rationale",
+    "summary",
+    "missing_information",
+    "repeat_order",
+    "complaint",
+    "corrected_classification",
+    "correction_reason",
+    "corrected_by",
+    "corrected_on",
+    "provider",
+    "model_version",
+    "prompt_version",
+    "audit_timestamp",
+)
+
+
+@frappe.whitelist()
+@agent_only
+def ticket_triage(ticket_id: str) -> dict | None:
+    """Return the AI's standing proposal for one ticket, or nothing.
+
+    Nothing is an answer rather than an error: most tickets have no triage, and
+    a panel that has to catch an exception to render an empty state is a panel
+    that will one day render a stack trace.
+
+    The newest wins. A ticket can accumulate proposals — an agent re-running the
+    chain, a correction recorded beside the original — and the one an agent is
+    working against is the last one made.
+    """
+    frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+    rows = frappe.get_all(
+        "HD AI Triage Result",
+        filters={"ticket": ticket_id},
+        fields=list(TRIAGE_VIEW_FIELDS),
+        order_by="creation desc",
+        limit_page_length=1,
+    )
+    return rows[0] if rows else None
