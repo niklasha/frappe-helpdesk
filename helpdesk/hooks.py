@@ -87,6 +87,12 @@ doc_events = {
         # and a timeout fails the ticket creation itself.
         "after_insert": "helpdesk.api.ai_ingress.enqueue_for_ticket",
     },
+    "Communication": {
+        # The replies after the first one. Wave 12 translated the ticket and
+        # left the thread in whatever language it arrived in, which read as
+        # finished and was half readable.
+        "after_insert": "helpdesk.api.ai_ingress.enqueue_for_message",
+    },
     "Assignment Rule": {
         "on_trash": "helpdesk.extends.assignment_rule.on_assignment_rule_trash",
         "validate": "helpdesk.extends.assignment_rule.on_assignment_rule_validate",

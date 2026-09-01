@@ -18,6 +18,7 @@ Three properties matter more than the feature:
 """
 
 import frappe
+from frappe.utils import strip_html
 
 from helpdesk.api import ai_runner, ai_triage, translation
 from helpdesk.utils import agent_only, is_admin
@@ -79,6 +80,116 @@ def enqueue_for_ticket(doc, method=None) -> None:
             title="Helpdesk AI ingress",
             message=f"could not queue ingress for {doc.name}\n\n{frappe.get_traceback()}",
         )
+
+
+def enqueue_for_message(doc, method=None) -> None:
+    """Hook target: queue a translation for a customer reply that just arrived.
+
+    Wave 12 translated the ticket and stopped there, so an agent read a Swedish
+    opening and English replies below it — worse than an honest English thread,
+    because it looks finished.
+
+    Everything the ticket hook is careful about applies here for the same
+    reasons: queued so the email never waits on a provider, governed by the same
+    switch because the bill grows per message, and silent on failure because a
+    lost translation must never cost the reply itself.
+    """
+    if doc.reference_doctype != "HD Ticket" or not doc.reference_name:
+        return
+    # Only what a customer sent us. Our own replies are written in the working
+    # language already, and outbound translation is a different endpoint with a
+    # different target.
+    if doc.sent_or_received != "Received":
+        return
+    if not ingress_enabled():
+        return
+    try:
+        frappe.enqueue(
+            "helpdesk.api.ai_ingress.translate_message",
+            queue="short",
+            job_id=f"{JOB_PREFIX}-message-{doc.name}",
+            deduplicate=True,
+            message=doc.name,
+            enqueue_after_commit=True,
+        )
+    except Exception:
+        frappe.log_error(
+            title="Helpdesk AI ingress",
+            message=f"could not queue translation for {doc.name}\n\n{frappe.get_traceback()}",
+        )
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def translate_message(message: str) -> dict:
+    """Put one customer message into the working language, beside its original.
+
+    Runs in a worker for the queued path and inline for an agent who asks. Both
+    are safe to repeat: the idempotency key is the message, so a retry replays
+    the first answer rather than buying a second.
+    """
+    done = {"message": message, "translated": False, "reason": None}
+    row = frappe.db.get_value(
+        "Communication",
+        message,
+        ["reference_doctype", "reference_name", "content", "sent_or_received"],
+        as_dict=True,
+    )
+    if not row or row.reference_doctype != "HD Ticket" or not row.reference_name:
+        done["reason"] = "not a ticket message"
+        return done
+    if row.sent_or_received != "Received":
+        done["reason"] = "not from the customer"
+        return done
+
+    ticket_id = row.reference_name
+    text = strip_html(row.content or "").strip()
+    if not text:
+        done["reason"] = "nothing to translate"
+        return done
+
+    working = translation.get_working_language()
+    source = translation.detect_language_code(text)
+    if not source or source == working or not _is_supported(source):
+        done["reason"] = "already readable"
+        return done
+
+    # When an email opens a ticket, its words become both the ticket description
+    # and the first Communication. The ingress has already translated the
+    # description, so translating this message would buy the same sentence
+    # twice and show it twice. Adopting that translation costs nothing and is
+    # what makes the opening email render like every later one.
+    adopted = frappe.db.get_value(
+        "HD Message Translation",
+        {
+            "ticket": ticket_id,
+            "direction": "Inbound",
+            "original_text": text,
+            "message": ["in", ("", None)],
+        },
+        "name",
+    )
+    if adopted:
+        frappe.db.set_value("HD Message Translation", adopted, "message", message)
+        done.update(translated=True, reason="adopted the ticket's own translation")
+        return done
+
+    try:
+        translation.generate_inbound_translation(
+            ticket_id=ticket_id,
+            original_text=text,
+            target_language=working,
+            message=message,
+            idempotency_key=f"ingress-translate-message-{message}",
+        )
+        done["translated"] = True
+    except Exception:
+        done["reason"] = "the provider did not answer"
+        frappe.log_error(
+            title="Helpdesk AI ingress",
+            message=f"translation failed for message {message}\n\n{frappe.get_traceback()}",
+        )
+    return done
 
 
 def run_ingress(ticket_id: str) -> dict:
