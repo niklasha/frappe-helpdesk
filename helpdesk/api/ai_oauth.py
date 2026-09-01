@@ -16,6 +16,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
 import time
@@ -146,7 +147,11 @@ LANDING_PARAMETERS = ("code", "state", "error")
 # The fields a connection is read out of. The tokens are not among them: nothing
 # that renders a connection has any use for one.
 CONNECTION_FIELDS = [
+    "name",
     "engine_name",
+    # Read so the status can say whether the connection can renew itself; the
+    # credential itself is never in this list.
+    "auth_refresh_token_env",
     "auth_oauth_provider",
     "auth_oauth_mode",
     "auth_connection_status",
@@ -1075,6 +1080,27 @@ def _connection_state(engine) -> str:
     return "connected" if cint(engine.get("auth_expires_at_unix")) > int(time.time()) else "expired"
 
 
+def _can_renew(engine) -> bool:
+    """Whether this connection holds what it needs to outlive its access token.
+
+    Presence, never the credential. A connection without this is not degraded —
+    it works perfectly until the moment it stops, and every other field reads
+    healthy right up to it. That is exactly how an engine here sat nine days from
+    a hard stop while its status said connected, its token was live and its scope
+    was granted: the missing fact had nowhere to be reported.
+    """
+    if engine.get("auth_refresh_token_env"):
+        return bool(os.environ.get(engine["auth_refresh_token_env"]))
+    name = engine.get("name") or engine.get("engine_name")
+    if not name:
+        return False
+    return bool(
+        get_decrypted_password(
+            "HD AI Engine", name, "auth_refresh_token", raise_exception=False
+        )
+    )
+
+
 def _connection(engine, grant: str | None = None) -> dict:
     """What may be said about a connection: facts about it, never a piece of it."""
     answer = {
@@ -1085,6 +1111,7 @@ def _connection(engine, grant: str | None = None) -> dict:
         "granted_scope": engine.get("auth_granted_scope"),
         "account_id": engine.get("auth_account_id"),
         "expires_at_unix": cint(engine.get("auth_expires_at_unix")),
+        "renewable": _can_renew(engine),
     }
     if grant:
         answer["grant"] = grant
