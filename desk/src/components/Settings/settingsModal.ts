@@ -38,6 +38,7 @@ import AIPrompts from "./AI/AIPrompts.vue";
 import MCPServers from "./AI/MCPServers.vue";
 import SparklesIcon from "~icons/lucide/sparkles";
 import ServerIcon from "~icons/lucide/server";
+import MessageSquareIcon from "~icons/lucide/message-square-text";
 
 export const showSettingsModal = ref(false);
 
