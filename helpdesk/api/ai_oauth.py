@@ -172,9 +172,14 @@ PRESETS = {
         # RFC 8252: the registered redirect is on the administrator's machine, so
         # no server-side callback can ever receive it. Hence paste-back only.
         "redirect_uri": "http://localhost:1455/auth/callback",
-        # raphain's openai_codex() asks for no scope, and asking for one narrows
-        # what the token can do rather than widening it.
-        "scope": "",
+        # What Codex CLI itself asks for. The half that matters is
+        # offline_access: OpenAI mints a refresh token only for a flow that
+        # asked it, so without this every connection holds an access token
+        # with a hard stop and nothing to renew it. (An earlier revision sent
+        # no scope at all, reasoning from raphain's openai_codex() — which
+        # describes the refresh exchange, not the authorize request, and the
+        # mistake surfaced as a production connection nine days from death.)
+        "scope": "openid profile email offline_access",
         "token_body_encoding": "json",
         "supports_pkce": 1,
         "supports_loopback_paste": 1,
