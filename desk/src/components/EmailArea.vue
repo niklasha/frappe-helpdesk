@@ -96,7 +96,49 @@
       </template>
     </div>
     <div class="border-0 border-t my-3 border-outline-elevation-2 !-mx-3" />
-    <EmailContent :content="content" />
+    <!-- LANG-01/02/03: the message reads in the language the agent works in,
+         and the words the customer actually sent stay one click away. Where
+         there is no translation this renders exactly what it always did. -->
+    <EmailContent v-if="!translation" :content="content" />
+    <template v-else>
+      <p
+        v-if="showOriginal"
+        class="whitespace-pre-line break-words text-ink-gray-8"
+      >
+        {{ translation.original_text }}
+      </p>
+      <p v-else class="whitespace-pre-line break-words text-ink-gray-8">
+        {{ translation.translated_text }}
+      </p>
+      <div
+        class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-gray-4"
+      >
+        <LanguagesIcon class="h-3.5 w-3.5 shrink-0" />
+        <span>
+          {{
+            showOriginal
+              ? __("Kundens egna ord ({0})").replace(
+                  "{0}",
+                  translation.source_language
+                )
+              : __("Maskinöversatt från {0}").replace(
+                  "{0}",
+                  translation.source_language
+                )
+          }}
+        </span>
+        <span v-if="!showOriginal && translation.model_version">
+          · {{ translation.model_version }}
+        </span>
+        <Button
+          class="ms-auto shrink-0"
+          variant="ghost"
+          size="sm"
+          :label="showOriginal ? __('Visa översättning') : __('Visa original')"
+          @click.stop="showOriginal = !showOriginal"
+        />
+      </div>
+    </template>
     <div class="flex flex-wrap gap-2">
       <AttachmentItem
         v-for="a in attachments"
@@ -116,6 +158,7 @@
 <script setup lang="ts">
 import { AttachmentItem } from "@/components";
 import { useScreenSize } from "@/composables/screen";
+import { useTicketTranslations } from "@/composables/useTicketTranslations";
 import { useAuthStore } from "@/stores/auth";
 import { TicketSymbol } from "@/types";
 import { dateFormat, dateTooltipFormat, timeAgo } from "@/utils";
@@ -123,6 +166,7 @@ import { Dropdown } from "frappe-ui";
 import { storeToRefs } from "pinia";
 import { computed, inject, ref } from "vue";
 import LucideSplit from "~icons/lucide/split";
+import LanguagesIcon from "~icons/lucide/languages";
 import { ReplyAllIcon, ReplyIcon } from "./icons";
 import TicketSplitModal from "./ticket/TicketSplitModal.vue";
 
@@ -152,6 +196,15 @@ const {
 
 const emit = defineEmits(["reply"]);
 const ticket = inject(TicketSymbol)!;
+
+// `.value` in script scope: the injected ticket is a ComputedRef, which the
+// template unwraps and this does not. Reading it without unwrapping is what
+// made the triage panel fetch nothing at all for a fortnight.
+const { forMessage } = useTicketTranslations(
+  computed(() => ticket.value?.doc?.name)
+);
+const translation = computed(() => forMessage(name));
+const showOriginal = ref(false);
 
 const auth = storeToRefs(useAuthStore());
 

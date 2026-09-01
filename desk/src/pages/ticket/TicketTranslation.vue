@@ -69,11 +69,19 @@ watch(
   { immediate: true }
 );
 
-// The inbound one: what the customer wrote and an agent has to read. The
-// outbound direction is the agent's own reply and belongs beside the editor,
-// not here.
+// The inbound one that belongs to no message: the ticket's own description.
+//
+// Since Wave 13 a translation that names a message is rendered inside that
+// message, so showing it here as well would put the same words on the screen
+// twice. What is left for this band is the case the thread cannot cover — a
+// ticket raised through the portal, whose description arrived as a field rather
+// than as an email. When a ticket was opened by email its description
+// translation is adopted by the first message, and this band correctly falls
+// silent.
 const inbound = computed(() =>
-  (translations.data || []).find((row) => row.direction === "Inbound")
+  (translations.data || []).find(
+    (row) => row.direction === "Inbound" && !row.message
+  )
 );
 
 function languageName(code: string): string {
