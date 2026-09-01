@@ -59,3 +59,4 @@ helpdesk.patches.seed_wave10_oauth_providers
 helpdesk.patches.seed_wave11_reference_data
 helpdesk.patches.set_default_portal_settings
 helpdesk.patches.set_wave10_provider_engine_kind
+helpdesk.patches.set_wave11_codex_offline_access
