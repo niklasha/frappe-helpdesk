@@ -1,9 +1,134 @@
 {
- "actions": [], "autoname": "hash", "creation": "2026-08-30 00:00:00.000000", "doctype": "DocType", "engine": "InnoDB",
- "field_order": ["ticket", "direction", "source_language", "target_language", "original_text", "translated_text", "reviewed", "reviewed_by", "reviewed_on", "sent_on", "provider", "model_version", "prompt_version", "idempotency_key"],
- "fields": [
-  {"fieldname":"ticket","fieldtype":"Link","label":"Ticket","options":"HD Ticket","reqd":1}, {"fieldname":"direction","fieldtype":"Select","label":"Direction","options":"Inbound\nOutbound"}, {"fieldname":"source_language","fieldtype":"Data","label":"Source Language"}, {"fieldname":"target_language","fieldtype":"Data","label":"Target Language"}, {"fieldname":"original_text","fieldtype":"Long Text","label":"Original Text","reqd":1}, {"fieldname":"translated_text","fieldtype":"Long Text","label":"Translated Text"}, {"fieldname":"reviewed","fieldtype":"Check","label":"Reviewed"}, {"fieldname":"reviewed_by","fieldtype":"Link","label":"Reviewed By","options":"User"}, {"fieldname":"reviewed_on","fieldtype":"Datetime","label":"Reviewed On"}, {"fieldname":"sent_on","fieldtype":"Datetime","label":"Sent On"}, {"fieldname":"provider","fieldtype":"Data","label":"Provider"}, {"fieldname":"model_version","fieldtype":"Data","label":"Model Version"}, {"fieldname":"prompt_version","fieldtype":"Data","label":"Prompt Version"}, {"fieldname":"idempotency_key","fieldtype":"Data","label":"Idempotency Key","unique":1}
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-08-30 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "ticket",
+  "message",
+  "direction",
+  "source_language",
+  "target_language",
+  "original_text",
+  "translated_text",
+  "reviewed",
+  "reviewed_by",
+  "reviewed_on",
+  "sent_on",
+  "provider",
+  "model_version",
+  "prompt_version",
+  "idempotency_key"
  ],
- "links": [], "modified": "2026-08-30 00:00:00.000000", "modified_by": "Administrator", "module": "Helpdesk", "name": "HD Message Translation", "owner": "Administrator",
- "permissions": [{"create":1,"delete":1,"read":1,"role":"System Manager","write":1},{"create":1,"read":1,"role":"Agent","write":1}], "sort_field":"modified", "sort_order":"DESC", "states":[], "track_changes":1
+ "fields": [
+  {
+   "fieldname": "ticket",
+   "fieldtype": "Link",
+   "label": "Ticket",
+   "options": "HD Ticket",
+   "reqd": 1
+  },
+  {
+   "fieldname": "message",
+   "fieldtype": "Link",
+   "label": "Message",
+   "options": "Communication",
+   "read_only": 1
+  },
+  {
+   "fieldname": "direction",
+   "fieldtype": "Select",
+   "label": "Direction",
+   "options": "Inbound\nOutbound"
+  },
+  {
+   "fieldname": "source_language",
+   "fieldtype": "Data",
+   "label": "Source Language"
+  },
+  {
+   "fieldname": "target_language",
+   "fieldtype": "Data",
+   "label": "Target Language"
+  },
+  {
+   "fieldname": "original_text",
+   "fieldtype": "Long Text",
+   "label": "Original Text",
+   "reqd": 1
+  },
+  {
+   "fieldname": "translated_text",
+   "fieldtype": "Long Text",
+   "label": "Translated Text"
+  },
+  {
+   "fieldname": "reviewed",
+   "fieldtype": "Check",
+   "label": "Reviewed"
+  },
+  {
+   "fieldname": "reviewed_by",
+   "fieldtype": "Link",
+   "label": "Reviewed By",
+   "options": "User"
+  },
+  {
+   "fieldname": "reviewed_on",
+   "fieldtype": "Datetime",
+   "label": "Reviewed On"
+  },
+  {
+   "fieldname": "sent_on",
+   "fieldtype": "Datetime",
+   "label": "Sent On"
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Data",
+   "label": "Provider"
+  },
+  {
+   "fieldname": "model_version",
+   "fieldtype": "Data",
+   "label": "Model Version"
+  },
+  {
+   "fieldname": "prompt_version",
+   "fieldtype": "Data",
+   "label": "Prompt Version"
+  },
+  {
+   "fieldname": "idempotency_key",
+   "fieldtype": "Data",
+   "label": "Idempotency Key",
+   "unique": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-01 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Helpdesk",
+ "name": "HD Message Translation",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Agent",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
 }

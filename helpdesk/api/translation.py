@@ -89,6 +89,30 @@ def _validate_supported_language(language_code):
         frappe.throw(_("Language {0} is not enabled for translation.").format(language_code))
 
 
+def _validate_message(message, ticket_id):
+    """Refuse a message that belongs to a different ticket, or to none.
+
+    An unchecked link is how one customer's words end up displayed inside
+    another customer's case. The view trusts this field to decide which
+    paragraph it is allowed to replace, so the check belongs here, at the point
+    the link is written, rather than in each place that reads it.
+    """
+    if not message:
+        return
+    owner = frappe.db.get_value(
+        "Communication",
+        message,
+        ["reference_doctype", "reference_name"],
+        as_dict=True,
+    )
+    if not owner:
+        frappe.throw(_("Message {0} was not found.").format(message))
+    if owner.reference_doctype != "HD Ticket" or owner.reference_name != ticket_id:
+        frappe.throw(
+            _("Message {0} does not belong to ticket {1}.").format(message, ticket_id)
+        )
+
+
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def record_translation(
@@ -98,13 +122,23 @@ def record_translation(
     source_language: str | None = None,
     target_language: str | None = None,
     direction: str = "Inbound",
+    message: str | None = None,
     provider: str | None = None,
     model_version: str | None = None,
     prompt_version: str | int | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
-    """Persist a translation next to its original text, replayable by key."""
+    """Persist a translation next to its original text, replayable by key.
+
+    `message` names the Communication these words arrived in. Without it a
+    translation can only be shown beside the ticket rather than beside the
+    paragraph it translates, which is the whole reason the agent view could
+    manage nothing better than a strip. It stays optional: every translation
+    recorded before Wave 13 has no message to name, and a guess would say
+    something false about what a customer wrote.
+    """
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+    _validate_message(message, ticket_id)
     source_language = source_language or detect_language_code(original_text)
     _validate_supported_language(source_language)
     _validate_supported_language(target_language)
@@ -118,6 +152,7 @@ def record_translation(
         {
             "doctype": "HD Message Translation",
             "ticket": ticket_id,
+            "message": message,
             "direction": direction,
             "original_text": original_text,
             "translated_text": translated_text,
@@ -159,6 +194,7 @@ def translate_inbound(
     original_text: str,
     translated_text: str | None = None,
     target_language: str | None = None,
+    message: str | None = None,
     provider: str | None = None,
     model_version: str | None = None,
     prompt_version: str | int | None = None,
@@ -175,6 +211,7 @@ def translate_inbound(
         translated_text=translated_text,
         target_language=target_language or get_working_language(),
         direction="Inbound",
+        message=message,
         provider=provider,
         model_version=model_version,
         prompt_version=prompt_version,
@@ -218,6 +255,7 @@ def generate_inbound_translation(
     ticket_id: str,
     original_text: str,
     target_language: str | None = None,
+    message: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
     """Translate a message a customer sent us, and record it beside the original.
@@ -245,6 +283,7 @@ def generate_inbound_translation(
         original_text=original_text,
         translated_text=text,
         target_language=target_language,
+        message=message,
         provider=generation["provider"],
         model_version=generation["model_version"],
         prompt_version=generation["prompt_version"],
@@ -374,6 +413,9 @@ def mark_translation_sent(translation_id: str) -> dict:
 
 TRANSLATION_VIEW_FIELDS = (
     "name",
+    # Which message these words arrived in. A view that cannot read this can
+    # only put the translation beside the ticket, never beside the paragraph.
+    "message",
     "direction",
     "source_language",
     "target_language",
