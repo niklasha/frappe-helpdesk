@@ -370,3 +370,38 @@ def mark_translation_sent(translation_id: str) -> dict:
     doc.sent_on = now_datetime()
     doc.save(ignore_permissions=True)
     return doc.as_dict()
+
+
+TRANSLATION_VIEW_FIELDS = (
+    "name",
+    "direction",
+    "source_language",
+    "target_language",
+    "original_text",
+    "translated_text",
+    "reviewed",
+    "reviewed_by",
+    "sent_on",
+    "provider",
+    "model_version",
+    "prompt_version",
+)
+
+
+@frappe.whitelist()
+@agent_only
+def ticket_translations(ticket_id: str) -> list:
+    """Return every translation recorded for one ticket, oldest first.
+
+    LANG-03 says the original must always be available, and available means
+    reachable: both halves have been kept since Wave 4 and no endpoint ever
+    handed them to anything an agent looks at. Oldest first because the
+    conversation reads that way.
+    """
+    frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+    return frappe.get_all(
+        "HD Message Translation",
+        filters={"ticket": ticket_id},
+        fields=list(TRANSLATION_VIEW_FIELDS),
+        order_by="creation asc",
+    )

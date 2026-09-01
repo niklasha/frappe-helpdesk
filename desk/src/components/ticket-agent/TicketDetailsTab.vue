@@ -6,6 +6,7 @@
     <div class="shrink-0 space-y-4 p-4">
       <TicketContact />
       <TicketSLA />
+      <TicketAITriage />
     </div>
 
     <!-- Scrollable sections: Key Info + Ticket Info + Recent / Similar Tickets -->
@@ -172,6 +173,7 @@ import TicketField from "../TicketField.vue";
 import AssignTo from "./AssignTo.vue";
 import TicketContact from "./TicketContact.vue";
 import TicketFeedback from "./TicketFeedback.vue";
+import TicketAITriage from "./TicketAITriage.vue";
 import TicketSLA from "./TicketSLA.vue";
 
 const ticket = inject(TicketSymbol)!;

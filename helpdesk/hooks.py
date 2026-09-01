@@ -81,6 +81,12 @@ user_invitation = {
 }
 
 doc_events = {
+    "HD Ticket": {
+        # Queues one job; never calls a model here. A model call in
+        # after_insert makes every inbound email wait on a third party,
+        # and a timeout fails the ticket creation itself.
+        "after_insert": "helpdesk.api.ai_ingress.enqueue_for_ticket",
+    },
     "Assignment Rule": {
         "on_trash": "helpdesk.extends.assignment_rule.on_assignment_rule_trash",
         "validate": "helpdesk.extends.assignment_rule.on_assignment_rule_validate",

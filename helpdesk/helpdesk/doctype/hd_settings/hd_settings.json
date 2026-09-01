@@ -9,6 +9,7 @@
   "priority_section",
   "default_priority",
   "working_language",
+  "ai_triage_incoming",
   "column_break_nvbf",
   "agent_groups_section",
   "restrict_tickets_by_agent_group",
@@ -248,6 +249,12 @@
    "label": "Working Language",
    "options": "HD Supported Language",
    "description": "The language agents read tickets and write replies in."
+  },
+  {
+   "fieldname": "ai_triage_incoming",
+   "fieldtype": "Check",
+   "label": "Analyse Incoming Tickets With AI",
+   "description": "Detect the language, translate what is not in the working language, and propose a triage — automatically, for every new ticket. Costs one AI call per ticket."
   },
   {
    "fieldname": "column_break_nvbf",
