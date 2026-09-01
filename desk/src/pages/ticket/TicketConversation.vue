@@ -5,6 +5,9 @@
   >
     Activity
   </div>
+  <!-- Above the messages: an agent needs to know the ticket was translated
+       before reading a word of it, not after scrolling to the end. -->
+  <TicketTranslation />
   <div class="overflow-auto px-5 md:px-10 grow">
     <div
       v-for="(c, i) in communications"
@@ -49,6 +52,7 @@ import { Avatar } from "frappe-ui";
 import { computed, inject, nextTick, watch } from "vue";
 import { useRoute } from "vue-router";
 import TicketCommunication from "./TicketCommunication.vue";
+import TicketTranslation from "./TicketTranslation.vue";
 import { ITicket } from "./symbols";
 
 interface P {
