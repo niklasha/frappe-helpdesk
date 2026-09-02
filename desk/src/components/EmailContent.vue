@@ -209,6 +209,30 @@ const htmlContent = computed(
 
 watch(iframeRef, (iframe) => {
   if (iframe) {
+    // Chromium can silently drop the initial about:srcdoc navigation of an
+    // iframe that enters the DOM with srcdoc already set: no load event, no
+    // error, no console output — the frame just keeps showing its initial
+    // about:blank document. Since the bound :srcdoc value never changes, Vue
+    // never re-sets the attribute, nothing re-triggers the load, and the mail
+    // stays blank at the h-10 fallback forever. Which mails it hits is a
+    // timing lottery per page load, not a property of the mail. Verified live
+    // (tickets 0002 and 0008 on the demo): re-setting the IDENTICAL attribute
+    // value makes the navigation commit and render fully.
+    //
+    // A committed srcdoc document reports URL "about:srcdoc" already while
+    // parsing; only the stuck initial document reports "about:blank" — that
+    // is the whole test. Inert on healthy loads, capped, and stops when the
+    // component unmounts.
+    let attempts = 0;
+    const ensureSrcdocCommitted = () => {
+      if (!iframe.isConnected || attempts >= 3) return;
+      if (iframe.contentDocument?.URL !== "about:blank") return;
+      attempts += 1;
+      const value = iframe.getAttribute("srcdoc");
+      if (value) iframe.setAttribute("srcdoc", value);
+      setTimeout(ensureSrcdocCommitted, 500 * attempts);
+    };
+    setTimeout(ensureSrcdocCommitted, 500);
     iframe.onload = () => {
       const emailContent =
         iframe.contentWindow?.document.querySelector(".email-content");
