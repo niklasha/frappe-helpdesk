@@ -149,10 +149,6 @@ def translate_message(message: str) -> dict:
         return done
 
     working = translation.get_working_language()
-    source = translation.detect_language_code(text)
-    if not source or source == working or not _is_supported(source):
-        done["reason"] = "already readable"
-        return done
 
     # When an email opens a ticket, its words become both the ticket description
     # and the first Communication. The ingress has already translated the
@@ -166,14 +162,22 @@ def translate_message(message: str) -> dict:
         return done
 
     try:
-        translation.generate_inbound_translation(
+        # Since Wave 14 the engine detects the language inside this call — the
+        # word-list gate that used to sit here filed most short or formal mail
+        # as undetectable, which was the point of removing it. The result says
+        # whether anything was recorded; "recorded": False is a verdict, not a
+        # failure.
+        result = translation.generate_inbound_translation(
             ticket_id=ticket_id,
             original_text=text,
             target_language=working,
             message=message,
             idempotency_key=f"ingress-translate-message-{message}",
         )
-        done["translated"] = True
+        if result.get("name"):
+            done["translated"] = True
+        else:
+            done["reason"] = result.get("reason") or "already readable"
     except Exception:
         done["reason"] = "the provider did not answer"
         frappe.log_error(
@@ -195,11 +199,12 @@ def run_ingress(ticket_id: str) -> dict:
 
     text = _ticket_text(ticket_id)
     working = translation.get_working_language()
-    source = translation.detect_language_code(text)
 
-    # Only a language we know we support, and only when it is not the one agents
-    # already read. Translating Swedish into Swedish is waste and noise.
-    if source and source != working and _is_supported(source):
+    # Since Wave 14 the engine does the detecting, inside the translation call.
+    # The word-list gate that stood here scored most short or formal mail as
+    # undetectable in all six languages, and an undetected English ticket sat
+    # untranslated looking exactly like one that needed nothing.
+    if text.strip():
         try:
             # The other half of the adoption in translate_message. Both jobs are
             # queued when a ticket arrives and nothing orders them, so whichever
@@ -212,13 +217,13 @@ def run_ingress(ticket_id: str) -> dict:
             if _covered_by_message(ticket_id, text):
                 done["translated"] = True
             else:
-                translation.generate_inbound_translation(
+                result = translation.generate_inbound_translation(
                     ticket_id=ticket_id,
                     original_text=text,
                     target_language=working,
                     idempotency_key=f"ingress-translate-{ticket_id}",
                 )
-                done["translated"] = True
+                done["translated"] = bool(result.get("name"))
         except Exception:
             frappe.log_error(
                 title="Helpdesk AI ingress", message=f"translation failed for {ticket_id}"
@@ -306,11 +311,3 @@ def _ticket_text(ticket_id: str) -> str:
 
     return ai_generation.ticket_text(ticket_id)
 
-
-def _is_supported(language_code: str) -> bool:
-    """A language the company has enabled — the catalogue decides, not the model."""
-    return bool(
-        frappe.db.exists(
-            "HD Supported Language", {"language_code": language_code, "enabled": 1}
-        )
-    )

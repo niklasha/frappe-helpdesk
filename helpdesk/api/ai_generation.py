@@ -110,11 +110,25 @@ PROMPTS = {
     },
     TRANSLATION_INBOUND: {
         "call": "generate_inbound_translation",
-        "purpose": "Translate a customer's message into the language agents work in",
+        "purpose": (
+            "Detect a customer message's language, and translate it into the "
+            "language agents work in when it is not already that"
+        ),
+        # Detection rides in the same call as the translation, because a word
+        # list proved too weak a detector (Wave 14): the model states the
+        # language it read, and only then translates — or declines, when the
+        # message is already in the working language.
         "prompt": (
-            TRANSLATION_INSTRUCTIONS
+            "You are the language desk of a helpdesk. First identify the "
+            "language the customer's message is written in. Then, unless it is "
+            "already the requested target language, translate it. "
+            + TRANSLATION_INSTRUCTIONS
             + " This translation is read by a colleague deciding what to do, so "
-            "stay literal where literal and fluent disagree.\n\n" + TEXT_ONLY
+            "stay literal where literal and fluent disagree. Answer with a JSON "
+            'object holding "language" (the ISO 639-1 code of the language the '
+            'message arrived in) and "translation" (the translated text, or '
+            "null when the message is already in the target language).\n\n"
+            + JSON_ONLY
         ),
     },
     TRANSLATION_OUTBOUND: {

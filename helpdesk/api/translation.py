@@ -193,6 +193,7 @@ def translate_inbound(
     ticket_id: str,
     original_text: str,
     translated_text: str | None = None,
+    source_language: str | None = None,
     target_language: str | None = None,
     message: str | None = None,
     provider: str | None = None,
@@ -209,6 +210,7 @@ def translate_inbound(
         ticket_id=ticket_id,
         original_text=original_text,
         translated_text=translated_text,
+        source_language=source_language,
         target_language=target_language or get_working_language(),
         direction="Inbound",
         message=message,
@@ -229,6 +231,39 @@ def _translation_hint(source_language, target_language):
     if source_language:
         hint += f" It is written in the language with the code {source_language}."
     return hint
+
+
+def _inbound_hint(target_language):
+    """Ask for detection and translation in one answer.
+
+    The engine names the language before anything else, so the ordinary case —
+    a message already in the working language — costs the call but no wasted
+    translation, and the recorded source is the model's own claim rather than
+    a word-list guess.
+    """
+    return (
+        "First identify the language of the message and state it as an ISO "
+        '639-1 code in "language". If that language is already '
+        f'"{target_language}", set "translation" to null. Otherwise translate '
+        f'the message into the language with the code "{target_language}" and '
+        'put the result in "translation".'
+    )
+
+
+def _detected_translation(original_text, target_language):
+    """Return the engine's combined verdict on one message, with provenance."""
+    engine = ai_generation.engine_or_throw()
+    instructions, prompt_version = ai_generation._prompt(
+        ai_generation.TRANSLATION_INBOUND
+    )
+    answer, response = ai_generation.generate_json(
+        engine,
+        instructions,
+        original_text,
+        _inbound_hint(target_language),
+        required_keys=("language",),
+    )
+    return answer, ai_generation.provenance(response, prompt_version)
 
 
 def _generated_translation(original_text, source_language, target_language, prompt_name):
@@ -258,30 +293,57 @@ def generate_inbound_translation(
     message: str | None = None,
     idempotency_key: str | None = None,
 ) -> dict:
-    """Translate a message a customer sent us, and record it beside the original.
+    """Detect a customer message's language and record its translation.
 
     What the customer actually wrote is stored unchanged: the translation is a
     reading aid for the agent, never a replacement for the words that arrived.
 
-    The languages are checked before the engine is asked. A language the
-    company has not enabled ends the same way whenever it is caught, so it is
-    caught while it is still free, and a key already used returns its record.
+    Returns the recorded row, or ``{"recorded": False, "reason": ...}`` when
+    the engine's answer means there is nothing to record — the message is
+    already in the working language, or in one the catalogue has not enabled.
+    A key already used returns its record without a second call.
     """
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     stored = ai_generation.replayed("HD Message Translation", idempotency_key)
     if stored:
         return frappe.get_doc("HD Message Translation", stored).as_dict()
-    source_language = detect_language_code(original_text)
     target_language = target_language or get_working_language()
-    _validate_supported_language(source_language)
     _validate_supported_language(target_language)
-    text, generation = _generated_translation(
-        original_text, source_language, target_language, ai_generation.TRANSLATION_INBOUND
-    )
+
+    # The model detects; the word list no longer gates. Six languages with a
+    # handful of marker words each filed most short or formal mail as
+    # undetectable, and an undetected English mail sat in front of a Swedish
+    # agent looking exactly like a mail that needed nothing. Detection rides in
+    # the same call as the translation — one call per message, and a detector
+    # that cannot disagree with its own translator.
+    answer, generation = _detected_translation(original_text, target_language)
+    source_language = str(answer.get("language") or "").strip().lower()
+    if not source_language:
+        frappe.throw(_("The AI engine did not name the message's language."))
+
+    # One call was spent either way; these two outcomes just record nothing.
+    # Already the working language is the ordinary case and the cheap answer.
+    # A language the catalogue refuses is not correspondence we translate,
+    # whoever detected it — recording it would put an unreviewable language
+    # into the thread.
+    if source_language == target_language:
+        return {"recorded": False, "reason": "already in the working language",
+                "source_language": source_language}
+    if not frappe.db.exists(
+        "HD Supported Language", {"language_code": source_language, "enabled": 1}
+    ):
+        return {"recorded": False, "reason": "language not enabled",
+                "source_language": source_language}
+
+    text = str(answer.get("translation") or "").strip()
+    if not text:
+        frappe.throw(_("The AI engine named a language but returned no translation."))
+
     result = translate_inbound(
         ticket_id=ticket_id,
         original_text=original_text,
         translated_text=text,
+        source_language=source_language,
         target_language=target_language,
         message=message,
         provider=generation["provider"],
