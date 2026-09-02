@@ -62,3 +62,4 @@ helpdesk.patches.set_wave10_provider_engine_kind
 helpdesk.patches.set_wave11_codex_offline_access
 helpdesk.patches.set_wave11_engine_dialect
 helpdesk.patches.set_wave12_language_names
+helpdesk.patches.set_wave14_inbound_prompt
