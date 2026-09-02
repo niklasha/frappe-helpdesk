@@ -49,6 +49,15 @@ scheduler_events = {
         # access token lives an hour. The sweep reaches five minutes ahead of
         # expiry, so it has to run more often than that window is wide.
         "*/5 * * * *": ["helpdesk.api.ai_oauth.refresh_expiring_tokens"],
+        # Frappe core polls the support inbox every ten minutes, which is a long
+        # time to stare at a helpdesk waiting for a mail you just sent. This is
+        # not a new job: scheduled jobs are keyed on the method and synced per
+        # app in installation order, so this row wins over core's `0/10` at
+        # every migrate — which is also why editing the Scheduled Job Type on a
+        # site is not enough; migrate writes hooks back over it. The pull is an
+        # UNSEEN-only IMAP sync and enqueues one deduplicated job per account,
+        # so the extra nine runs an hour cost polling, not processing.
+        "* * * * *": ["frappe.email.doctype.email_account.email_account.pull"],
     },
 }
 
