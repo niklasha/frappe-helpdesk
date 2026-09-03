@@ -30,6 +30,7 @@ SEEDS = (
     ("helpdesk.patches.seed_wave7_prompts", "HD AI Prompt"),
     ("helpdesk.patches.seed_wave9_prompts", "HD AI Prompt"),
     ("helpdesk.patches.seed_wave10_oauth_providers", "HD AI OAuth Provider"),
+    ("helpdesk.patches.seed_wave15_order_desk_types", "HD Ticket Type"),
 )
 
 
