@@ -22,6 +22,9 @@ from helpdesk.helpdesk.doctype.hd_settings.helpers import (
     get_default_email_content,
     is_email_content_empty,
 )
+from helpdesk.helpdesk.doctype.hd_ticket_type.hd_ticket_type import (
+    classification_group,
+)
 from helpdesk.helpdesk.doctype.hd_ticket_activity.hd_ticket_activity import (
     log_ticket_activity,
 )
@@ -121,12 +124,15 @@ class HDTicket(Document):
     def before_validate(self):
         self.check_update_perms()
         self.set_thread_signals()
+        # The type before the coarse class: since Wave 15 the class rolls up
+        # from the type the rule named, so reading it first would roll up from
+        # whatever the previous save left behind.
+        self.set_ticket_type()
         self.set_classification_model()
         self.set_production_option()
         self.set_workflow_identifier()
         self.set_shipping_method()
         self.set_external_mail()
-        self.set_ticket_type()
         self.set_raised_by()
         self.set_priority()
         self.set_first_responded_on()
@@ -365,14 +371,56 @@ class HDTicket(Document):
         ):
             capture_event("ticket_resolved")
 
+    def _matching_classification_rule(self):
+        """The first enabled rule whose keywords appear in the subject.
+
+        Matched once and remembered for the length of one save: the type and the
+        coarse class both need the answer, and asking twice would let a rule
+        edited between the two calls give a ticket a type from one rule and a
+        class from another.
+
+        Only the subject, as before. Reading the body would change which mail
+        matches on every site at once, and belongs in its own slice with its own
+        contract — a mail with DEX only in the body is still prioritised by the
+        AI proposal rather than by the rule.
+        """
+        if hasattr(self, "_rule_match"):
+            return self._rule_match
+        subject = (self.subject or "").lower()
+        self._rule_match = None
+        for rule in frappe.db.get_all(
+            "HD Ticket Classification Rule",
+            filters={"enabled": 1},
+            fields=["keywords", "classification", "ticket_type"],
+            order_by="rule_order asc, modified asc",
+            limit_page_length=0,
+        ):
+            keywords = [word.strip().lower() for word in (rule.keywords or "").replace("\n", ",").split(",") if word.strip()]
+            if any(keyword in subject for keyword in keywords):
+                self._rule_match = rule
+                break
+        return self._rule_match
+
     def set_ticket_type(self):
+        # What arrived on the document, before this method decides anything. A
+        # type that merely fell through to the default says nothing about this
+        # ticket, and the coarse class must be able to tell the two apart —
+        # comparing against the default afterwards cannot distinguish an agent
+        # who deliberately chose it from a ticket that fell to it.
+        self._ticket_type_was_decided = bool(self.ticket_type)
         if self.ticket_type:
+            return
+        rule = self._matching_classification_rule()
+        if rule and rule.ticket_type:
+            self.ticket_type = rule.ticket_type
+            self._ticket_type_was_decided = True
             return
         subject = (self.subject or "").lower()
         if "order" in subject:
             order_type = frappe.db.get_value("HD Ticket Type", {"name": "Order"}, "name")
             if order_type:
                 self.ticket_type = order_type
+                self._ticket_type_was_decided = True
                 return
         self.ticket_type = (
             frappe.db.get_single_value("HD Settings", "default_ticket_type") or ""
@@ -384,17 +432,21 @@ class HDTicket(Document):
         # preserve an explicit classification when updating an existing ticket.
         if self.classification_model and not self.is_new():
             return
-        subject = (self.subject or "").lower()
-        for rule in frappe.db.get_all(
-            "HD Ticket Classification Rule",
-            filters={"enabled": 1},
-            fields=["keywords", "classification"],
-            order_by="rule_order asc, modified asc",
-        ):
-            keywords = [word.strip().lower() for word in (rule.keywords or "").replace("\n", ",").split(",") if word.strip()]
-            if any(keyword in subject for keyword in keywords):
-                self.classification_model = rule.classification
+        # The type is the vocabulary; this field is its rollup onto the five
+        # words every existing report counts by. A type somebody decided —
+        # chosen by an agent, or named by a rule — speaks for the ticket. One
+        # that merely fell through to the default does not, or every unmatched
+        # mail is filed as the default's class instead of what the subject says.
+        if getattr(self, "_ticket_type_was_decided", False):
+            group = classification_group(self.ticket_type)
+            if group:
+                self.classification_model = group
                 return
+        rule = self._matching_classification_rule()
+        if rule and rule.classification:
+            self.classification_model = rule.classification
+            return
+        subject = (self.subject or "").lower()
         classifications = (
             (("order", "beställ", "bestall"), "Order"),
             (("reklamation", "complaint"), "Reklamation"),
