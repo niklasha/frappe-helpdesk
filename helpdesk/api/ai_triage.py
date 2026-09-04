@@ -4,6 +4,7 @@ import frappe
 from frappe.utils import flt, now_datetime
 
 from helpdesk.api import ai_generation
+from helpdesk.helpdesk.doctype.hd_ticket_type.hd_ticket_type import match_ticket_type
 from helpdesk.utils import agent_only
 
 TRIAGE_SCHEMA = (
@@ -29,6 +30,48 @@ TRIAGE_FIELDS = (
 TRIAGE_LINKS = {"priority": "HD Ticket Priority", "suggested_agent": "User"}
 
 DEFAULT_CONFIDENCE_THRESHOLD = 0.7
+
+# How many catalogue labels the prompt is allowed to list. The lookup that
+# reads the catalogue is explicitly unbounded (limit_page_length=0, since
+# Frappe's default page is 20 and the desk alone has that many), so the cap is
+# set here, on purpose and in one place: a site that has grown hundreds of
+# types would otherwise spend the prompt on its own vocabulary and push the
+# customer's message out of the model's attention. Past the cap the model is
+# still asked to answer with a catalogue label, it is just not shown them all,
+# and an answer outside the catalogue still resolves to nothing rather than to
+# a guess.
+CATALOGUE_PROMPT_CAP = 200
+
+
+def _catalogue_sentence() -> str:
+    """One sentence naming the enabled ticket types, or nothing.
+
+    Nothing when the catalogue is empty, so a fresh site's prompt does not ask
+    the model to choose from an empty list.
+    """
+    rows = frappe.get_all(
+        "HD Ticket Type",
+        filters={"disabled": 0},
+        pluck="name",
+        order_by="name asc",
+        limit_page_length=0,
+    )
+    names = [name for name in rows if name][:CATALOGUE_PROMPT_CAP]
+    if not names:
+        return ""
+    return (
+        " For classification, answer with exactly one of these labels, spelled "
+        "as written: " + ", ".join(names) + "."
+    )
+
+
+def _schema_with_catalogue() -> str:
+    """The triage schema with the desk's own vocabulary appended.
+
+    TRIAGE_SCHEMA itself stays a constant: what the model is asked for does not
+    change per site, only which labels it may answer with.
+    """
+    return TRIAGE_SCHEMA + _catalogue_sentence()
 
 
 # Fields that are prose in the record and that a model readily answers with a
@@ -123,7 +166,13 @@ def record_triage(
         needs_review = True
     doc = frappe.get_doc({
         "doctype": "HD AI Triage Result", "ticket": ticket_id,
-        "classification": classification, "priority": priority,
+        "classification": classification,
+        # The model's words are kept as written; beside them, the catalogued
+        # type those words name — or nothing when the catalogue holds no such
+        # label. Only recorded here: the ticket's own type moves when an agent
+        # accepts, never on a proposal.
+        "proposed_ticket_type": match_ticket_type(classification),
+        "priority": priority,
         "suggested_agent": suggested_agent, "confidence": confidence,
         "confidence_threshold": confidence_threshold,
         "requires_human_review": needs_review,
@@ -174,7 +223,7 @@ def triage_ticket(
         engine,
         instructions,
         ai_generation.ticket_text(ticket_id),
-        TRIAGE_SCHEMA,
+        _schema_with_catalogue(),
         TRIAGE_FIELDS,
     )
     proposal = _linked_values(
@@ -201,9 +250,14 @@ def triage_ticket(
 def correct_triage(
     triage_id: str, classification: str, reason: str | None = None
 ) -> dict:
-    """Record a human correction without erasing the original proposal."""
+    """Record a human correction without erasing the original proposal.
+
+    The corrected label resolves against the catalogue the same way the
+    model's answer did, so a correction is as catalogued as a proposal.
+    """
     doc = frappe.get_doc("HD AI Triage Result", triage_id)
     doc.corrected_classification = classification
+    doc.corrected_ticket_type = match_ticket_type(classification)
     doc.correction_reason = reason
     doc.corrected_by = frappe.session.user
     doc.corrected_on = now_datetime()
@@ -219,6 +273,7 @@ TRIAGE_VIEW_FIELDS = (
     "name",
     "ticket",
     "classification",
+    "proposed_ticket_type",
     "priority",
     "suggested_agent",
     "confidence",
@@ -232,6 +287,7 @@ TRIAGE_VIEW_FIELDS = (
     "repeat_order",
     "complaint",
     "corrected_classification",
+    "corrected_ticket_type",
     "correction_reason",
     "corrected_by",
     "corrected_on",
