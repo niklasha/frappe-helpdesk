@@ -1375,6 +1375,13 @@ class HDTicket(Document):
                 self.status = self.default_open_status
             # if received that means customer has replied
             self.last_customer_response = frappe.utils.now_datetime()
+            # The home page holds every ticket the agent has, not one open
+            # document, so the inbound reply is announced site-wide here
+            # rather than through the doc room only a ticket page joins.
+            publish_event(
+                "helpdesk:ticket-update",
+                data={"name": self.name, "ticket_id": self.name},
+            )
         # If communication is outgoing, it must be a reply from agent
         if c.sent_or_received == "Sent":
             # Ignore system notifications
