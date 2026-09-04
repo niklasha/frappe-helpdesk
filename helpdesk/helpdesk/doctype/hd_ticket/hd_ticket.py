@@ -304,10 +304,18 @@ class HDTicket(Document):
             if agent.agent_name and agent.agent_name.lower() in mentioned:
                 self.assign_with_reason(agent.user, "direct agent mention")
                 return
-        for agent in frappe.db.get_all("HD Agent", filters={"is_active": 1}, fields=["user"], order_by="modified asc"):
-            if self.is_assignable_agent(agent.user):
-                self.assign_with_reason(agent.user, "active-agent fallback")
-                return
+        # No third step, deliberately. ROUTE-08: "Vid osäker automatisk
+        # tilldelning skall ärendet ligga kvar i gemensam kö." A ticket with no
+        # account manager and nobody named in its text carries no signal about
+        # who should own it, and picking the first active agent by modification
+        # date identifies nobody suitable — it just picks. The reason this used
+        # to record, "active-agent fallback", said as much.
+        #
+        # What it cost was not a wrong name on a ticket: it was that "nobody has
+        # picked this up" stopped being answerable from the list, because the
+        # shared queue was emptied by the system rather than by people. Upstream
+        # Frappe leaves such a ticket unassigned, and this is the one row of 216
+        # where our own work scored lower than the product we built on.
 
     def assign_with_reason(self, user, reason):
         """Assign this ticket and persist why the routing decision was made."""
@@ -415,12 +423,17 @@ class HDTicket(Document):
             self.ticket_type = rule.ticket_type
             self._ticket_type_was_decided = True
             return
+        # The pre-Wave-15 heuristic, kept for sites that still carry a type
+        # literally named "Order". It is a guess about the subject line, not a
+        # decision by a rule or a person, so it does NOT mark the type as
+        # decided: the coarse class must still come from the rule and the
+        # subject, or a group-less legacy type painted Övrigt by the backfill
+        # silences both. A Wave 0 contract found exactly that.
         subject = (self.subject or "").lower()
         if "order" in subject:
             order_type = frappe.db.get_value("HD Ticket Type", {"name": "Order"}, "name")
             if order_type:
                 self.ticket_type = order_type
-                self._ticket_type_was_decided = True
                 return
         self.ticket_type = (
             frappe.db.get_single_value("HD Settings", "default_ticket_type") or ""
@@ -437,6 +450,10 @@ class HDTicket(Document):
         # chosen by an agent, or named by a rule — speaks for the ticket. One
         # that merely fell through to the default does not, or every unmatched
         # mail is filed as the default's class instead of what the subject says.
+        # Only when the type states a group. A type that states none has said
+        # nothing about what its tickets are, and the rule and the subject below
+        # do have something to say. classification_group's docstring names the
+        # contract that caught this.
         if getattr(self, "_ticket_type_was_decided", False):
             group = classification_group(self.ticket_type)
             if group:
