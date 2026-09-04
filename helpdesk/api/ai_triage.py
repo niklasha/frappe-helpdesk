@@ -1,9 +1,10 @@
 import json
 
 import frappe
+from frappe import _
 from frappe.utils import flt, now_datetime
 
-from helpdesk.api import ai_generation
+from helpdesk.api import ai_generation, governance
 from helpdesk.helpdesk.doctype.hd_ticket_type.hd_ticket_type import match_ticket_type
 from helpdesk.utils import agent_only
 
@@ -266,6 +267,98 @@ def correct_triage(
     return doc.as_dict()
 
 
+# The ticket fields one click may write. agent_group is deliberately absent:
+# writing it is a routing action, not a field write. HD Ticket.on_update calls
+# remove_assignment_if_not_in_team, which clears every assignment when the
+# team changes on an Open ticket whose assignee is not in the new team and
+# whose new team's Assignment Rule has users, and Frappe's rule then hands the
+# ticket to that rotation. ROUTE-10 and K8 say the person on the case stays on
+# it, so the team is derived and returned (suggested_team), never applied.
+ACCEPTED_FIELDS = ("ticket_type", "priority")
+
+
+def _derived_team(agent: str | None) -> str | None:
+    """The one team the suggested agent belongs to, or nothing.
+
+    Read-only: nothing here writes to the ticket. An agent in no team or in
+    several has no single team to derive, and guessing would be worse than
+    saying so — the caller records the refusal in words instead.
+    """
+    if not agent:
+        return None
+    teams = frappe.get_all("HD Team Member", filters={"user": agent}, pluck="parent")
+    teams = sorted(set(teams))
+    return teams[0] if len(teams) == 1 else None
+
+
+def _acceptance(doc) -> tuple[dict, dict]:
+    """(values to apply, refusals in words) for one proposal.
+
+    The type applied is the Link resolved when the proposal was recorded or
+    corrected — never the free-text classification, which would fail the Link
+    validation or, worse, create the type. A proposal that resolved to no type
+    has nothing to write and says so; the priority is a separate value and
+    still applies, so one refused field never takes the other down with it.
+    """
+    applied, refused = {}, {}
+    ticket_type = doc.corrected_ticket_type or doc.proposed_ticket_type
+    if ticket_type:
+        applied["ticket_type"] = ticket_type
+    else:
+        label = doc.corrected_classification or doc.classification or ""
+        refused["ticket_type"] = _("Ärendetypen {0} finns inte i katalogen").format(
+            f"'{label}'" if label else _("(ingen)")
+        )
+    if doc.priority and frappe.db.exists("HD Ticket Priority", doc.priority):
+        applied["priority"] = doc.priority
+    elif doc.priority:
+        refused["priority"] = _("Prioriteten {0} finns inte längre").format(f"'{doc.priority}'")
+    if doc.suggested_agent and not _derived_team(doc.suggested_agent):
+        # Recorded so the panel can say "hör till flera team" rather than
+        # saying nothing about a derivation that declined.
+        refused["agent_group"] = doc.suggested_agent
+    return applied, refused
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def accept_triage(triage_id: str) -> dict:
+    """Apply one proposal to its ticket, and sign the proposal with who did it.
+
+    Only ACCEPTED_FIELDS are written, through ticket.save() so every rule the
+    ticket carries (SLA, priority from type, activity) runs as it would for a
+    hand edit — db.set_value would leave the ticket typed but its SLA unaware.
+    The team is returned as suggested_team and never written: see
+    ACCEPTED_FIELDS for why.
+    """
+    doc = frappe.get_doc("HD AI Triage Result", triage_id)
+    frappe.has_permission("HD Ticket", "write", doc=doc.ticket, throw=True)
+    applied, refused = _acceptance(doc)
+    if applied:
+        ticket = frappe.get_doc("HD Ticket", doc.ticket)
+        for field, value in applied.items():
+            ticket.set(field, value)
+        ticket.save()
+    doc.accepted_by = frappe.session.user
+    doc.accepted_on = now_datetime()
+    doc.applied_fields = ", ".join(applied) or None
+    doc.refused_fields = json.dumps(refused, ensure_ascii=False) if refused else None
+    doc.status = "Accepted"
+    doc.save(ignore_permissions=True)
+    governance.log_automation_event(
+        "accept_triage",
+        actor="User",
+        reference_doctype="HD Ticket",
+        reference_name=doc.ticket,
+        details={"triage": doc.name, "applied": applied, "refused": refused},
+    )
+    answer = doc.as_dict()
+    answer["applied"] = applied
+    answer["refused"] = refused
+    answer["suggested_team"] = _derived_team(doc.suggested_agent)
+    return answer
+
+
 # What a panel needs to show one proposal. Named here rather than in the
 # component, so the next reader of this record does not invent a slightly
 # different list and a slightly different ordering.
@@ -291,6 +384,10 @@ TRIAGE_VIEW_FIELDS = (
     "correction_reason",
     "corrected_by",
     "corrected_on",
+    "accepted_by",
+    "accepted_on",
+    "applied_fields",
+    "refused_fields",
     "provider",
     "model_version",
     "prompt_version",
