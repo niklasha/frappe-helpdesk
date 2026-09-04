@@ -262,6 +262,15 @@ def correct_triage(
     doc.correction_reason = reason
     doc.corrected_by = frappe.session.user
     doc.corrected_on = now_datetime()
+    # A correction after an acceptance is a change of mind. Left in place, the
+    # acceptance made the row say two things at once — that the proposal was
+    # applied, and that it was wrong — and the header went on showing
+    # "Godtagen av …" over a type nobody stands behind. Clearing it makes the
+    # row read as a fresh proposal, which accept_triage can apply again.
+    doc.accepted_by = None
+    doc.accepted_on = None
+    doc.applied_fields = None
+    doc.refused_fields = None
     doc.status = "Corrected"
     doc.save(ignore_permissions=True)
     return doc.as_dict()
