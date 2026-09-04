@@ -4,22 +4,74 @@
  "creation": "2026-08-30 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
- "field_order": ["from_status", "to_status", "event", "condition"],
+ "field_order": [
+  "from_status",
+  "to_status",
+  "event",
+  "condition"
+ ],
  "fields": [
-  {"fieldname": "from_status", "fieldtype": "Link", "label": "From Status", "options": "HD Ticket Status", "reqd": 1},
-  {"fieldname": "to_status", "fieldtype": "Link", "label": "To Status", "options": "HD Ticket Status", "reqd": 1},
-  {"fieldname": "event", "fieldtype": "Data", "label": "Event", "reqd": 1},
-  {"fieldname": "condition", "fieldtype": "Code", "label": "Condition", "options": "Python"}
+  {
+   "fieldname": "from_status",
+   "fieldtype": "Link",
+   "label": "From Status",
+   "options": "HD Ticket Status",
+   "reqd": 1
+  },
+  {
+   "fieldname": "to_status",
+   "fieldtype": "Link",
+   "label": "To Status",
+   "options": "HD Ticket Status",
+   "reqd": 1
+  },
+  {
+   "fieldname": "event",
+   "fieldtype": "Data",
+   "label": "Event",
+   "reqd": 1
+  },
+  {
+   "fieldname": "condition",
+   "fieldtype": "Code",
+   "label": "Condition",
+   "options": "Python"
+  }
  ],
  "links": [],
- "modified": "2026-08-30 00:00:00.000000",
+ "modified": "2026-09-03 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Helpdesk",
  "name": "HD Ticket Workflow Transition",
  "owner": "Administrator",
  "permissions": [
-  {"create": 1, "delete": 1, "read": 1, "role": "System Manager", "write": 1},
-  {"create": 1, "read": 1, "role": "Agent", "write": 1}
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  },
+  {
+   "role": "Agent",
+   "read": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "report": 1
+  },
+  {
+   "role": "Helpdesk Automation Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "report": 1,
+   "share": 1
+  }
  ],
  "sort_field": "modified",
  "sort_order": "DESC",

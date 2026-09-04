@@ -12,6 +12,7 @@ class HDTicketClassificationRule(Document):
     """An administrator-managed rule mapping ticket content to a ticket type."""
 
     def validate(self):
+        self.require_automation_administration()
         self.adopt_the_catalogue_group()
         self.require_a_target()
         self.refuse_an_unknown_class()
@@ -53,3 +54,23 @@ class HDTicketClassificationRule(Document):
                     self.classification, ", ".join(CLASSIFICATION_GROUPS)
                 )
             )
+
+    def require_automation_administration(self):
+        """Deciding how inbound mail is sorted, prioritised, routed or answered is
+        an administrative act — AUTH-05, in the customer's words: "Det skall gå
+        att begränsa vem som får ändra automationer."
+
+        Upstream restricts its own automations out of the box (Assignment Rule
+        is System Manager only). These doctypes were placed beside them with
+        Agent write, so anyone on the desk could change the rules; the role that
+        was meant to gate them has been seeded since Wave 5 and checked by no
+        code path. The gate lives in the controller rather than only in the
+        schema, as it does for HD AI Prompt, so it holds on every save path —
+        seeds and operator scripts save with permissions ignored, and that is
+        the one case that may pass.
+        """
+        if self.flags.ignore_permissions:
+            return
+        from helpdesk.api.governance import AUTOMATION_MANAGER_ROLE, require_role
+
+        require_role(AUTOMATION_MANAGER_ROLE)
