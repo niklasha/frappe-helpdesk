@@ -421,14 +421,41 @@ TRIAGE_VIEW_FIELDS = (
 )
 
 
+# The four things a ticket can need next (AIAN-16). Derived on every read from
+# the triage and the thread; nothing stores them, so nothing can drift.
+STEP_AWAITING_TRIAGE = "Väntar på bedömning"
+STEP_ASSESS = "Bedöm ärendet"
+STEP_REPLY_TO_CUSTOMER = "Återkoppla till kunden"
+STEP_AWAITING_CUSTOMER = "Väntar på kund"
+
+
+def next_step(ticket: dict, triage: dict | None) -> str:
+    """Say what one ticket needs next, from what is already known about it.
+
+    Pure: `ticket` carries `last_customer_response` and `last_agent_response`
+    (stamped by HD Ticket.on_communication_update), `triage` is the standing
+    proposal or None. `accepted_by` is read with .get so the derivation holds
+    both before and after the acceptance fields land on the triage record.
+    """
+    if not triage:
+        return STEP_AWAITING_TRIAGE
+    if not triage.get("accepted_by"):
+        return STEP_ASSESS
+    customer = ticket.get("last_customer_response")
+    agent = ticket.get("last_agent_response")
+    if not agent or (customer and customer > agent):
+        return STEP_REPLY_TO_CUSTOMER
+    return STEP_AWAITING_CUSTOMER
+
+
 @frappe.whitelist()
 @agent_only
-def ticket_triage(ticket_id: str) -> dict | None:
-    """Return the AI's standing proposal for one ticket, or nothing.
+def ticket_triage(ticket_id: str) -> dict:
+    """Return the AI's standing proposal for one ticket plus what it needs next.
 
-    Nothing is an answer rather than an error: most tickets have no triage, and
-    a panel that has to catch an exception to render an empty state is a panel
-    that will one day render a stack trace.
+    A ticket without a triage is the common case, not an error: the answer is
+    then a dict carrying only `next_step`, and the panel can tell the two apart
+    by the presence of `name`. Nothing here is stored on HD Ticket.
 
     The newest wins. A ticket can accumulate proposals — an agent re-running the
     chain, a correction recorded beside the original — and the one an agent is
@@ -442,4 +469,13 @@ def ticket_triage(ticket_id: str) -> dict | None:
         order_by="creation desc",
         limit_page_length=1,
     )
-    return rows[0] if rows else None
+    triage = rows[0] if rows else None
+    ticket = frappe.db.get_value(
+        "HD Ticket",
+        ticket_id,
+        ["last_customer_response", "last_agent_response"],
+        as_dict=True,
+    ) or {}
+    answer = dict(triage) if triage else {}
+    answer["next_step"] = next_step(ticket, triage)
+    return answer

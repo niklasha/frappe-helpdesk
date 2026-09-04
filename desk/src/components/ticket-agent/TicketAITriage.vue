@@ -1,5 +1,7 @@
 <template>
-  <div v-if="triage.data" class="flex flex-col gap-2.5 border-b px-6 py-3 sm:px-0">
+  <!-- ticket_triage now always answers with a dict (AIAN-16); only one that
+       carries a record name is a proposal worth a panel. -->
+  <div v-if="triage.data?.name" class="flex flex-col gap-2.5 border-b px-6 py-3 sm:px-0">
     <!-- Label plus two badges does not fit one line on a phone; wrapping keeps
          them all readable instead of pushing the last one off the edge. -->
     <div class="flex flex-wrap items-center gap-2">
