@@ -415,12 +415,17 @@ class HDTicket(Document):
             self.ticket_type = rule.ticket_type
             self._ticket_type_was_decided = True
             return
+        # The pre-Wave-15 heuristic, kept for sites that still carry a type
+        # literally named "Order". It is a guess about the subject line, not a
+        # decision by a rule or a person, so it does NOT mark the type as
+        # decided: the coarse class must still come from the rule and the
+        # subject, or a group-less legacy type painted Övrigt by the backfill
+        # silences both. A Wave 0 contract found exactly that.
         subject = (self.subject or "").lower()
         if "order" in subject:
             order_type = frappe.db.get_value("HD Ticket Type", {"name": "Order"}, "name")
             if order_type:
                 self.ticket_type = order_type
-                self._ticket_type_was_decided = True
                 return
         self.ticket_type = (
             frappe.db.get_single_value("HD Settings", "default_ticket_type") or ""
@@ -437,6 +442,10 @@ class HDTicket(Document):
         # chosen by an agent, or named by a rule — speaks for the ticket. One
         # that merely fell through to the default does not, or every unmatched
         # mail is filed as the default's class instead of what the subject says.
+        # Only when the type states a group. A type that states none has said
+        # nothing about what its tickets are, and the rule and the subject below
+        # do have something to say. classification_group's docstring names the
+        # contract that caught this.
         if getattr(self, "_ticket_type_was_decided", False):
             group = classification_group(self.ticket_type)
             if group:

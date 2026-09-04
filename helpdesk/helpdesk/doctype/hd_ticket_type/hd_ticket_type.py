@@ -44,16 +44,22 @@ def match_ticket_type(named: str | None) -> str | None:
 
 
 def classification_group(ticket_type: str | None) -> str:
-    """Which of the five coarse classes a type rolls up to.
+    """Which of the five coarse classes a type rolls up to, or nothing.
 
-    Empty is Övrigt rather than empty: a ticket has carried one of five words
-    since Wave 0, and a blank there is a hole in every report that counts by it.
-    A type created before the field existed reads blank until the backfill runs,
-    and a save in that window must not write the hole onto a ticket.
+    Nothing, deliberately, when the type states no group — the fallback belongs
+    to the caller, not here. A type carrying no group has said nothing about
+    what its tickets are, and answering Övrigt on its behalf is an answer: it
+    silences the keyword rule and the subject line, which do have something to
+    say. Every ticket type an administrator creates without choosing a group
+    would otherwise file its whole catch as Övrigt, overruling a rule that says
+    Reklamation.
+
+    Found by a Wave 0 contract: a ticket titled "Order request" matched the
+    subject ladder for Order, was typed with a group-less type left behind by an
+    older test, and came out Övrigt.
     """
     if not ticket_type:
         return ""
-    return (
-        frappe.get_cached_value("HD Ticket Type", ticket_type, "classification_group")
-        or FALLBACK_GROUP
-    )
+    return frappe.get_cached_value(
+        "HD Ticket Type", ticket_type, "classification_group"
+    ) or ""
