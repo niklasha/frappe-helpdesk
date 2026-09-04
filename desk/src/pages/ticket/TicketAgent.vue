@@ -1,8 +1,8 @@
 <template>
-  <div v-if="ticket.doc?.name" class="flex-1">
+  <div v-if="ticket.doc?.name" class="flex-1 flex flex-col min-h-0">
     <TicketHeader :viewers="viewers" />
     <TicketClassificationRow />
-    <div class="h-full flex overflow-hidden">
+    <div class="flex-1 min-h-0 flex overflow-hidden">
       <div class="flex-1 flex flex-col overflow-hidden">
         <!-- Tabs & Communication Area -->
         <TicketActivityPanel />

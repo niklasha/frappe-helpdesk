@@ -130,7 +130,8 @@ watch(
   { immediate: true }
 );
 
-const proposal = computed(() => triage.data || null);
+// ticket_triage always answers with a dict; {next_step} alone means no triage.
+const proposal = computed(() => (triage.data?.name ? triage.data : null));
 
 // next_step rides on the same response; null means the endpoint predates it.
 const nextStep = computed(() => triage.data?.next_step || "");
@@ -165,23 +166,25 @@ const refusedText = computed(() => {
       return refused;
     }
   }
-  const labels: Record<string, string> = {
-    ticket_type: __("Ärendetyp"),
-    priority: __("Prioritet"),
-    agent_group: __("Team"),
+  const line = (field: string, reason: unknown) => {
+    const r = String(reason);
+    if (field === "ticket_type") return __("Ärendetyp: {0}", [r]);
+    if (field === "priority") return __("Prioritet: {0}", [r]);
+    if (field === "agent_group") return __("Team: {0}", [r]);
+    return `${field}: ${r}`;
   };
   return Object.entries(refused)
-    .map(([field, reason]) => `${labels[field] || field}: ${reason}`)
+    .map(([field, reason]) => line(field, reason))
     .join(" · ");
 });
 
 const accept = createResource({
   url: "helpdesk.api.ai_triage.accept_triage",
   makeParams: () => ({ triage_id: proposal.value?.name }),
-  onSuccess(data: any) {
-    // The endpoint returns the updated triage dict; showing it directly saves
-    // a round trip, and the ticket reload brings the applied type/priority.
-    if (data) triage.data = data;
+  onSuccess() {
+    // The accept answer carries no next_step, so re-read the triage instead
+    // of showing it; the ticket reload brings the applied type/priority.
+    triage.fetch();
     refreshTicket();
     toast.success(__("Förslaget är använt"));
   },
