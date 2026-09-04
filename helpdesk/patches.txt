@@ -66,3 +66,4 @@ helpdesk.patches.set_wave14_inbound_prompt
 helpdesk.patches.seed_wave15_order_desk_types
 helpdesk.patches.set_wave15_classification_groups
 helpdesk.patches.seed_wave15_order_desk_rules
+helpdesk.patches.grant_wave15_automation_role
