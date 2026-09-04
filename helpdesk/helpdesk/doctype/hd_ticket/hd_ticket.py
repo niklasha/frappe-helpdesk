@@ -304,10 +304,18 @@ class HDTicket(Document):
             if agent.agent_name and agent.agent_name.lower() in mentioned:
                 self.assign_with_reason(agent.user, "direct agent mention")
                 return
-        for agent in frappe.db.get_all("HD Agent", filters={"is_active": 1}, fields=["user"], order_by="modified asc"):
-            if self.is_assignable_agent(agent.user):
-                self.assign_with_reason(agent.user, "active-agent fallback")
-                return
+        # No third step, deliberately. ROUTE-08: "Vid osäker automatisk
+        # tilldelning skall ärendet ligga kvar i gemensam kö." A ticket with no
+        # account manager and nobody named in its text carries no signal about
+        # who should own it, and picking the first active agent by modification
+        # date identifies nobody suitable — it just picks. The reason this used
+        # to record, "active-agent fallback", said as much.
+        #
+        # What it cost was not a wrong name on a ticket: it was that "nobody has
+        # picked this up" stopped being answerable from the list, because the
+        # shared queue was emptied by the system rather than by people. Upstream
+        # Frappe leaves such a ticket unassigned, and this is the one row of 216
+        # where our own work scored lower than the product we built on.
 
     def assign_with_reason(self, user, reason):
         """Assign this ticket and persist why the routing decision was made."""
