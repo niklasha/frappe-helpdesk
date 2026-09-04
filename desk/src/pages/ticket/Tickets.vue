@@ -175,13 +175,20 @@ const options = computed(() => ({
       custom: ({ row, item }) => {
         const seenBy = row._seen ? JSON.parse(row._seen) : [];
         const isSeen = seenBy.includes(userId || "");
-        return h(
-          "span",
-          {
-            class: ["truncate flex-1", !isSeen && "font-semibold"],
-          },
-          item
-        );
+        const count = Number(row.communication_count ?? 0);
+        return h("div", { class: "flex min-w-0 flex-1 flex-col" }, [
+          h(
+            "span",
+            { class: ["truncate", !isSeen && "font-semibold"] },
+            item
+          ),
+          h("span", { class: "truncate text-xs text-ink-gray-5" }, [
+            __("{0} meddelanden", [count]),
+            " \u00b7 ",
+            // file count arrives with W20 (attachments on the list row); a dash until then
+            __("Filer") + ": \u2013",
+          ]),
+        ]);
       },
     },
     status: {
