@@ -191,6 +191,8 @@ interface P {
   options: {
     doctype: string;
     defaultFilters?: Record<string, any>;
+    /** Always applied, on top of saved and URL filters; never saved into a view. */
+    fixedFilters?: Record<string, any>;
     columnConfig?: Record<string, any>;
     emptyState?: {
       // type of a h componnt
@@ -678,7 +680,9 @@ function updateColumns(obj) {
 
 function reload(reset: boolean = false) {
   if (reset) {
-    defaultParams.filters = normalizeFilters(options.value.defaultFilters);
+    defaultParams.filters = withFixedFilters(
+      normalizeFilters(options.value.defaultFilters)
+    );
     defaultParams.order_by = "modified desc";
     defaultParams.page_length = options.value.default_page_length;
     pageLengthCount.value = options.value.default_page_length;
@@ -710,7 +714,7 @@ function handlePageLength(count: number, loadMore: boolean = false) {
 
 function handleViewUpdate() {
   const view = {
-    filters: JSON.stringify(defaultParams.filters),
+    filters: JSON.stringify(withoutFixedFilters(defaultParams.filters)),
     columns: JSON.stringify(defaultParams.columns),
     rows: JSON.stringify(defaultParams.rows),
     order_by: defaultParams.order_by,
@@ -813,13 +817,33 @@ function switchToView(view: string): boolean {
 function applyUrlFilters() {
   const urlFilters = parseUrlFilters();
   if (!urlFilters) {
-    defaultParams.filters = viewFilters;
+    defaultParams.filters = withFixedFilters(viewFilters);
     return;
   }
   const overriddenFields = new Set(urlFilters.map((c) => c[0]));
-  defaultParams.filters = urlFilters.length
-    ? [...viewFilters.filter((c) => !overriddenFields.has(c[0])), ...urlFilters]
-    : [];
+  defaultParams.filters = withFixedFilters(
+    urlFilters.length
+      ? [...viewFilters.filter((c) => !overriddenFields.has(c[0])), ...urlFilters]
+      : []
+  );
+}
+
+// `fixedFilters` (a sidebar queue's `name in [...]`) must narrow the list no
+// matter which view is on: a saved default view replaces `defaultFilters`
+// in switchToView, so they are layered here, after the view and the URL, on
+// every (re)load, and stripped again before a view is saved.
+function fixedFilterConditions() {
+  return normalizeFilters(options.value.fixedFilters);
+}
+function withFixedFilters(conditions) {
+  const fixed = fixedFilterConditions();
+  if (!fixed.length) return conditions;
+  return [...withoutFixedFilters(conditions), ...fixed];
+}
+function withoutFixedFilters(conditions) {
+  const fixedFields = new Set(fixedFilterConditions().map((c) => c[0]));
+  if (!fixedFields.size) return conditions;
+  return normalizeFilters(conditions).filter((c) => !fixedFields.has(c[0]));
 }
 
 /** null when the URL carries no filters; [] means "clear them". */

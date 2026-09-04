@@ -8,8 +8,6 @@ the list cannot disagree.
 
 import frappe
 from frappe import _
-from frappe.query_builder import Criterion
-from frappe.query_builder.functions import Count
 
 from helpdesk.utils import agent_only
 
@@ -74,9 +72,31 @@ def _criterion(queue: str, user: str, ticket):
     frappe.throw(_("Okänd kö: {0}").format(queue))
 
 
-def _query(queue: str, user: str):
+def _names(queue: str, user: str) -> list[str]:
+    """Names of every ticket in ``queue`` that ``user`` may see, newest first.
+
+    The criterion is evaluated with the query builder (two of the queues
+    compare columns with each other, which frappe filters cannot express), and
+    the result is then narrowed with ``frappe.get_list`` so the HD Ticket
+    permission query (``hd_ticket.permission_query``; restricts by agent group
+    when HD Settings says so) applies exactly as it does to the ticket list.
+    """
     ticket = frappe.qb.DocType("HD Ticket")
-    return frappe.qb.from_(ticket).where(_criterion(queue, user, ticket)), ticket
+    candidates = (
+        frappe.qb.from_(ticket)
+        .select(ticket.name)
+        .where(_criterion(queue, user, ticket))
+        .run(pluck=True)
+    )
+    if not candidates:
+        return []
+    return frappe.get_list(
+        "HD Ticket",
+        filters={"name": ["in", list(candidates)]},
+        order_by="modified desc",
+        pluck="name",
+        ignore_permissions=False,
+    )
 
 
 @frappe.whitelist()
@@ -87,22 +107,16 @@ def tickets(queue: str) -> list[str]:
     Unpaged on purpose: the ticket list narrows itself to these names, and the
     sidebar's counter is ``len`` of this very list.
     """
-    query, ticket = _query(queue, frappe.session.user)
-    rows = (
-        query.select(ticket.name)
-        .orderby(ticket.modified, order=frappe.qb.desc)
-        .run(pluck=True)
-    )
-    return list(rows)
+    return _names(queue, frappe.session.user)
 
 
 @frappe.whitelist()
 @agent_only
 def counts() -> dict[str, int]:
-    """One counter per queue for the calling agent, keyed as ``QUEUE_KEYS``."""
+    """One counter per queue for the calling agent, keyed as ``QUEUE_KEYS``.
+
+    Each counter is the length of what ``tickets`` answers for that queue, so
+    the number and the list cannot disagree.
+    """
     user = frappe.session.user
-    result = {}
-    for key in QUEUE_KEYS:
-        query, ticket = _query(key, user)
-        result[key] = query.select(Count(ticket.name)).run()[0][0]
-    return result
+    return {key: len(_names(key, user)) for key in QUEUE_KEYS}

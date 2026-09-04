@@ -173,17 +173,21 @@ const selectBannerActions = [
 
 // A sidebar queue (?queue=<key>) narrows the list to the names the queues
 // endpoint answers with, so the list and the sidebar counter come from one
-// filter. Limitation: the names are fetched up front and handed to the list
-// as `name in [...]`, so a queue with thousands of tickets sends them all;
-// fine at this site's size, and it keeps the list's own filters, sort and
-// views untouched.
+// filter. The names go in as `fixedFilters`, not `defaultFilters`: the list
+// drops its defaultFilters as soon as the agent has a saved default view,
+// while fixedFilters are layered on top of any view and never saved into
+// one. Limitation: the names are fetched up front and sent as
+// `name in [...]`, so a queue with thousands of tickets sends them all; fine
+// at this site's size, and it keeps the list's own filters, sort and views
+// untouched.
 const queue = computed(() =>
   isCustomerPortal.value ? "" : ((route.query.queue as string) || "")
 );
 const queueNames = ref<string[]>([]);
 const loadedQueue = ref("");
 // Bumped when the queue's membership changes, so the list remounts with the
-// new names (it reads defaultFilters once, at mount).
+// new names; leaving the queue remounts it too (the key changes), which is
+// what clears the name filter again.
 const queueVersion = ref(0);
 
 const queueTickets = createResource({
@@ -229,7 +233,7 @@ watch(
 
 const options = computed(() => ({
   doctype: "HD Ticket",
-  defaultFilters: queue.value ? { name: ["in", queueNames.value] } : {},
+  fixedFilters: queue.value ? { name: ["in", queueNames.value] } : {},
   columnConfig: {
     subject: {
       custom: ({ row, item }) => {
