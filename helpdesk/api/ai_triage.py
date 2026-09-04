@@ -5,7 +5,10 @@ from frappe import _
 from frappe.utils import flt, now_datetime
 
 from helpdesk.api import ai_generation, governance
-from helpdesk.helpdesk.doctype.hd_ticket_type.hd_ticket_type import match_ticket_type
+from helpdesk.helpdesk.doctype.hd_ticket_type.hd_ticket_type import (
+    classification_group,
+    match_ticket_type,
+)
 from helpdesk.utils import agent_only
 
 TRIAGE_SCHEMA = (
@@ -305,12 +308,15 @@ def _acceptance(doc) -> tuple[dict, dict]:
 
     The type applied is the Link resolved when the proposal was recorded or
     corrected — never the free-text classification, which would fail the Link
-    validation or, worse, create the type. A proposal that resolved to no type
-    has nothing to write and says so; the priority is a separate value and
-    still applies, so one refused field never takes the other down with it.
+    validation or, worse, create the type. It is resolved again here, at accept
+    time: a type disabled since the proposal was written must not be written
+    to the ticket on the strength of a lookup that was true last week. A
+    proposal that resolves to no type has nothing to write and says so; the
+    priority is a separate value and still applies, so one refused field never
+    takes the other down with it.
     """
     applied, refused = {}, {}
-    ticket_type = doc.corrected_ticket_type or doc.proposed_ticket_type
+    ticket_type = match_ticket_type(doc.corrected_ticket_type or doc.proposed_ticket_type)
     if ticket_type:
         applied["ticket_type"] = ticket_type
     else:
@@ -325,7 +331,9 @@ def _acceptance(doc) -> tuple[dict, dict]:
     if doc.suggested_agent and not _derived_team(doc.suggested_agent):
         # Recorded so the panel can say "hör till flera team" rather than
         # saying nothing about a derivation that declined.
-        refused["agent_group"] = doc.suggested_agent
+        refused["agent_group"] = _("{0} hör till flera team eller inget").format(
+            doc.suggested_agent
+        )
     return applied, refused
 
 
@@ -347,6 +355,15 @@ def accept_triage(triage_id: str) -> dict:
         ticket = frappe.get_doc("HD Ticket", doc.ticket)
         for field, value in applied.items():
             ticket.set(field, value)
+        # HD Ticket.set_classification_model returns early for an existing
+        # ticket, so the coarse class would stay where the first classification
+        # left it while the type moved on. Roll the type up here; a type that
+        # states no group says nothing and leaves the class alone.
+        if "ticket_type" in applied:
+            group = classification_group(applied["ticket_type"])
+            if group and group != ticket.classification_model:
+                ticket.classification_model = group
+                applied["classification_model"] = group
         ticket.save()
     doc.accepted_by = frappe.session.user
     doc.accepted_on = now_datetime()
