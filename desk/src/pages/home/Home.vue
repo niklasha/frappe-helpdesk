@@ -144,6 +144,7 @@
 <script setup lang="ts">
 import { LayoutHeader } from "@/components";
 import { useAuthStore } from "@/stores/auth";
+import { globalStore } from "@/stores/globalStore";
 import { capture } from "@/telemetry";
 import { __ } from "@/translation";
 import {
@@ -155,7 +156,8 @@ import {
   toast,
 } from "frappe-ui";
 import { storeToRefs } from "pinia";
-import { computed, ref } from "vue";
+import { useDebounceFn } from "@vueuse/core";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import ChartItem from "./components/ChartItem.vue";
 
 type Layout = {
@@ -183,6 +185,7 @@ type DashboardResponse = {
 };
 
 const { userName, userId } = storeToRefs(useAuthStore());
+const { $socket } = globalStore();
 const editing = ref(false);
 const layout = ref<LayoutItem[]>([]);
 const oldLayout = ref<LayoutItem[]>([]);
@@ -443,4 +446,22 @@ const onLayoutUpdate = (newLayout: Layout[]) => {
     item.layout = newLayout[idx];
   });
 };
+
+// A new ticket or an inbound reply reaches the home page over the socket; the
+// reload waits a moment so triage has had time to set type and priority, and
+// a burst of events collapses into one reload. Editing is left alone.
+const TICKET_EVENTS = ["helpdesk:new-ticket", "helpdesk:ticket-update"];
+const reloadDashboard = useDebounceFn(() => {
+  if (editing.value || isLoading.value) return;
+  agentDashboard.reload({ reset_layout: false });
+}, 1500);
+
+onMounted(() => {
+  $socket.on("helpdesk:new-ticket", reloadDashboard);
+  $socket.on("helpdesk:ticket-update", reloadDashboard);
+});
+
+onUnmounted(() => {
+  TICKET_EVENTS.forEach((event) => $socket.off(event, reloadDashboard));
+});
 </script>

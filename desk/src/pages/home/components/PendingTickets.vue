@@ -205,21 +205,37 @@ const props = defineProps({
 
 const router = useRouter();
 const { views } = useView("HD Ticket");
-const currentTab = ref("upcoming_sla");
-const chartTabs = [
+// The widget opens on what needs an answer: the customer reply that sits
+// under "Pending" is the row an agent must not miss (B6).
+const currentTab = ref("pending");
+
+type TabCounts = Record<string, number>;
+// One COUNT per tab so the headers say how much waits behind each of them.
+const tabCounts = createResource({
+  url: "helpdesk.api.agent_home.agent_home.get_pending_ticket_counts",
+  auto: true,
+});
+
+const tabLabel = (label: string, key: string) => {
+  const counts: TabCounts | undefined = tabCounts.data;
+  const count = counts?.[key];
+  return count === undefined ? label : `${label} (${count})`;
+};
+
+const chartTabs = computed(() => [
   {
-    label: __("SLA"),
+    label: tabLabel(__("SLA"), "upcoming_sla"),
     value: "upcoming_sla",
   },
   {
-    label: __("Pending"),
+    label: tabLabel(__("Pending"), "pending"),
     value: "pending",
   },
   {
-    label: __("Recent"),
+    label: tabLabel(__("Recent"), "new_tickets"),
     value: "new_tickets",
   },
-];
+]);
 
 const titles: Record<string, string> = {
   upcoming_sla: __("SLA Alerts"),
@@ -292,7 +308,7 @@ function getReasonColorClass(reason: {
   text: string;
   seconds_until_due?: number;
 }) {
-  if (reason.text.includes("overdue")) {
+  if (reason.text.includes("overdue") || reason.text === "SLA bruten") {
     return "text-ink-red-6";
   }
 
@@ -347,5 +363,6 @@ onMounted(() => {
 // Watch for tab changes and fetch tickets
 watch(currentTab, (newTab) => {
   getPendingTicketsResource.fetch({ ticket_type: newTab });
+  tabCounts.reload();
 });
 </script>

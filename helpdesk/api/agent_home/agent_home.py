@@ -417,14 +417,24 @@ def get_avg_time_metrics(
     }
 
 
-def _get_upcoming_sla_tickets(limit=10):
-    filters = [
+def _upcoming_sla_filters() -> list:
+    # A breached SLA (Failed) is still the agent's problem, so the tab admits
+    # it alongside the two "due" states instead of hiding it (B6).
+    return [
         ["sla", "is", "set"],
-        ["agreement_status", "in", ["First Response Due", "Resolution Due"]],
+        [
+            "agreement_status",
+            "in",
+            ["First Response Due", "Resolution Due", "Failed"],
+        ],
         ["status_category", "=", "Open"],
         ["_assign", "like", f"%{frappe.session.user}%"],
         ["creation", "between", [add_months(today(), -6), today()]],
     ]
+
+
+def _get_upcoming_sla_tickets(limit=10):
+    filters = _upcoming_sla_filters()
 
     tickets = frappe.get_list(
         "HD Ticket",
@@ -446,7 +456,10 @@ def _get_upcoming_sla_tickets(limit=10):
 
     for ticket in tickets:
         agreement_status = ticket.get("agreement_status", "")
-        if agreement_status == "Resolution Due":
+        if agreement_status == "Failed":
+            due_time = ticket.get("resolution_by") or ticket.get("response_by")
+            reason_text = "SLA bruten"
+        elif agreement_status == "Resolution Due":
             due_time = ticket.get("resolution_by")
             time_until = format_time_difference(due_time, context="until")
             reason_text = (
@@ -482,7 +495,8 @@ def _get_upcoming_sla_tickets(limit=10):
     return tickets, total_count
 
 
-def _get_new_tickets(limit=10):
+def _new_ticket_filters() -> list | None:
+    """Filters for the recently-assigned tab, None when nothing was assigned."""
     one_week_ago = frappe.utils.add_to_date(frappe.utils.now_datetime(), days=-7)
 
     ToDo = DocType("ToDo")
@@ -499,14 +513,20 @@ def _get_new_tickets(limit=10):
     ticket_names = [row[0] for row in assigned_tickets]
 
     if not ticket_names:
-        return [], 0
+        return None
 
-    filters = [
+    return [
         ["name", "in", ticket_names],
         ["_assign", "like", f"%{frappe.session.user}%"],
         ["status_category", "=", "Open"],
         ["creation", "between", [add_months(today(), -6), today()]],
     ]
+
+
+def _get_new_tickets(limit=10):
+    filters = _new_ticket_filters()
+    if filters is None:
+        return [], 0
 
     tickets = frappe.get_list(
         "HD Ticket",
@@ -534,13 +554,17 @@ def _get_new_tickets(limit=10):
     return tickets, total_count
 
 
-def _get_pending_response_tickets(limit=10):
-    filters = [
+def _pending_response_filters() -> list:
+    return [
         ["_assign", "like", f"%{frappe.session.user}%"],
         ["status_category", "=", "Open"],
         ["last_customer_response", "is", "set"],
         ["creation", "between", [add_months(today(), -6), today()]],
     ]
+
+
+def _get_pending_response_tickets(limit=10):
+    filters = _pending_response_filters()
 
     tickets = frappe.get_list(
         "HD Ticket",
@@ -572,7 +596,9 @@ def _get_pending_response_tickets(limit=10):
 
 @frappe.whitelist()
 @agent_only
-def get_pending_tickets(ticket_type: str = "upcoming_sla"):
+# The default matches the tab the widget opens on, so the dashboard seeds the
+# widget with the rows it will show.
+def get_pending_tickets(ticket_type: str = "pending"):
     if ticket_type == "upcoming_sla":
         tickets, total_count = _get_upcoming_sla_tickets(limit=6)
     elif ticket_type == "new_tickets":
@@ -583,6 +609,22 @@ def get_pending_tickets(ticket_type: str = "upcoming_sla"):
     return {
         "tickets": tickets,
         "total_pending_tickets": total_count,
+    }
+
+
+@frappe.whitelist()
+@agent_only
+def get_pending_ticket_counts() -> dict:
+    """One count per tab of the pending widget, for the tab headers.
+
+    Three COUNT queries over the same filters the tabs list with, so the
+    number in the header is the number the tab shows.
+    """
+    new_filters = _new_ticket_filters()
+    return {
+        "upcoming_sla": get_ticket_count(_upcoming_sla_filters()),
+        "new_tickets": get_ticket_count(new_filters) if new_filters else 0,
+        "pending": get_ticket_count(_pending_response_filters()),
     }
 
 
