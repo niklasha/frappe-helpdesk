@@ -29,7 +29,9 @@
       </template>
     </LayoutHeader>
     <ListViewBuilder
+      v-if="queueReady"
       ref="listViewRef"
+      :key="queueListKey"
       :options="options"
       @row-click="
         (row) =>
@@ -81,6 +83,7 @@ import ExportModal from "@/components/ticket/ExportModal.vue";
 import ViewBreadcrumbs from "@/components/ViewBreadcrumbs.vue";
 import { normalizeFilters } from "@/components/view-controls/filter";
 import ViewModal from "@/components/ViewModal.vue";
+import { queueLabel } from "@/components/layouts/queueSettings";
 import { currentView, useView } from "@/composables/useView";
 import { useAuthStore } from "@/stores/auth";
 import { globalStore } from "@/stores/globalStore";
@@ -88,8 +91,8 @@ import { useTicketStatusStore } from "@/stores/ticketStatus";
 import { __ } from "@/translation";
 import { View } from "@/types";
 import { isCustomerPortal, shortDuration } from "@/utils";
-import { Badge, dayjs, Tooltip, usePageMeta } from "frappe-ui";
-import { computed, h, onMounted, onUnmounted, reactive, ref } from "vue";
+import { Badge, createResource, dayjs, Tooltip, usePageMeta } from "frappe-ui";
+import { computed, h, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 const router = useRouter();
@@ -168,8 +171,65 @@ const selectBannerActions = [
   },
 ];
 
+// A sidebar queue (?queue=<key>) narrows the list to the names the queues
+// endpoint answers with, so the list and the sidebar counter come from one
+// filter. Limitation: the names are fetched up front and handed to the list
+// as `name in [...]`, so a queue with thousands of tickets sends them all;
+// fine at this site's size, and it keeps the list's own filters, sort and
+// views untouched.
+const queue = computed(() =>
+  isCustomerPortal.value ? "" : ((route.query.queue as string) || "")
+);
+const queueNames = ref<string[]>([]);
+const loadedQueue = ref("");
+// Bumped when the queue's membership changes, so the list remounts with the
+// new names (it reads defaultFilters once, at mount).
+const queueVersion = ref(0);
+
+const queueTickets = createResource({
+  url: "helpdesk.api.queues.tickets",
+  onSuccess: (names: string[]) => {
+    const changed =
+      loadedQueue.value !== queue.value ||
+      names.length !== queueNames.value.length ||
+      names.some((name, i) => name !== queueNames.value[i]);
+    queueNames.value = names;
+    loadedQueue.value = queue.value;
+    if (changed) queueVersion.value++;
+  },
+});
+
+const queueReady = computed(
+  () => !queue.value || loadedQueue.value === queue.value
+);
+const queueListKey = computed(() =>
+  queue.value ? `queue:${queue.value}:${queueVersion.value}` : "list"
+);
+
+function loadQueue() {
+  if (!queue.value) return;
+  queueTickets.submit({ queue: queue.value });
+}
+
+watch(
+  queue,
+  () => {
+    loadQueue();
+    if (queue.value) {
+      currentView.value = {
+        label: queueLabel(queue.value) || __("List"),
+        icon: LucideAlignJustify,
+      };
+    } else if (!route.query.view) {
+      currentView.value = { label: __("List"), icon: LucideAlignJustify };
+    }
+  },
+  { immediate: true }
+);
+
 const options = computed(() => ({
   doctype: "HD Ticket",
+  defaultFilters: queue.value ? { name: ["in", queueNames.value] } : {},
   columnConfig: {
     subject: {
       custom: ({ row, item }) => {
@@ -456,23 +516,28 @@ function onViewModalUpdate(viewInfo: any, action: string) {
   handleView(viewInfo, action, viewDialogConfig, () => listViewRef.value?.list);
 }
 
+function onTicketEvent() {
+  if (queue.value) loadQueue();
+  listViewRef.value?.reload();
+}
+
 onMounted(() => {
-  if (!route.query.view) {
+  if (!route.query.view && !queue.value) {
     currentView.value = {
       label: __("List"),
       icon: LucideAlignJustify,
     };
   }
   if (!isCustomerPortal.value) {
-    $socket.on("helpdesk:new-ticket", () => {
-      listViewRef.value?.reload();
-    });
+    $socket.on("helpdesk:new-ticket", onTicketEvent);
+    $socket.on("helpdesk:ticket-update", onTicketEvent);
   }
 });
 
 onUnmounted(() => {
   if (!isCustomerPortal.value) {
-    $socket.off("helpdesk:new-ticket");
+    $socket.off("helpdesk:new-ticket", onTicketEvent);
+    $socket.off("helpdesk:ticket-update", onTicketEvent);
   }
 });
 

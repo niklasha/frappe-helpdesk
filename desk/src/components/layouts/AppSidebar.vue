@@ -57,6 +57,12 @@
                   <component :is="device.modifierIcon" class="h-3 w-3" />
                   <span class="text-sm">K</span>
                 </span>
+                <span
+                  v-else-if="item.count !== undefined"
+                  class="me-2 text-sm tabular-nums text-ink-gray-5"
+                >
+                  {{ item.count }}
+                </span>
                 <Badge
                   v-else-if="item.badge"
                   class="me-2"
@@ -130,7 +136,7 @@ import {
   SidebarLabel,
 } from "frappe-ui";
 import { storeToRefs } from "pinia";
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { RouteLocationRaw } from "vue-router";
 import { useRoute, useRouter } from "vue-router";
 import LucideBell from "~icons/lucide/bell";
@@ -139,6 +145,9 @@ import {
   agentPortalSidebarOptions,
   customerPortalSidebarOptions,
 } from "./layoutSettings";
+import { queueItemKey, queueOptions } from "./queueSettings";
+import { globalStore } from "@/stores/globalStore";
+import { createResource } from "frappe-ui";
 
 const props = defineProps<{
   profileSettings: any[];
@@ -187,6 +196,7 @@ function toggleSection(label: string) {
 const activeItem = ref<string | null>(currentRouteKey());
 
 function currentRouteKey(): string | null {
+  if (route.query.queue) return queueItemKey(route.query.queue as string);
   return (route.query.view as string) || (route.name as string) || null;
 }
 
@@ -252,8 +262,51 @@ const mainItems = computed(() => {
   return [...top, ...navItems.value];
 });
 
+// One counter per queue, from the same filters the list uses. Refetched when
+// a ticket arrives or changes so the numbers follow the mail, not the reload.
+const queueCounts = createResource({
+  url: "helpdesk.api.queues.counts",
+  cache: "helpdesk:queue-counts",
+  auto: !isCustomerPortal.value,
+});
+
+const QUEUE_EVENTS = ["helpdesk:new-ticket", "helpdesk:ticket-update"];
+const { $socket } = globalStore();
+const refetchQueueCounts = () => queueCounts.reload();
+
+onMounted(() => {
+  if (isCustomerPortal.value || !$socket) return;
+  QUEUE_EVENTS.forEach((event) => $socket.on(event, refetchQueueCounts));
+});
+onUnmounted(() => {
+  if (isCustomerPortal.value || !$socket) return;
+  QUEUE_EVENTS.forEach((event) => $socket.off(event, refetchQueueCounts));
+});
+
+const queueItems = computed(() =>
+  queueOptions.map((queue) => {
+    const key = queueItemKey(queue.key);
+    return {
+      label: queue.label,
+      icon: queue.icon,
+      isActive: activeItem.value === key,
+      onClick: () =>
+        selectItem(key, { name: "TicketsAgent", query: { queue: queue.key } }),
+      count: queueCounts.data?.[queue.key] ?? "",
+      key,
+    };
+  })
+);
+
 const sections = computed(() => {
   const result = [{ label: "", items: mainItems.value, collapsible: false }];
+  if (!isCustomerPortal.value) {
+    result.push({
+      label: __("Köer"),
+      items: queueItems.value,
+      collapsible: true,
+    });
+  }
   if (publicViews.value?.length && !isCustomerPortal.value) {
     result.push({
       label: __("Public Views"),
@@ -290,7 +343,7 @@ function parseViews(views: any[]) {
 }
 
 watch(
-  () => [route.name, route.query.view],
+  () => [route.name, route.query.view, route.query.queue],
   () => (activeItem.value = currentRouteKey())
 );
 </script>
