@@ -7,10 +7,6 @@
       <TicketContact />
       <TicketSLA />
       <TicketAITriage />
-      <!-- Only speaks for a ticket raised through the portal, whose description
-           arrived as a field rather than as an email. Everything that came in as
-           a message is translated inside that message, down in the thread. -->
-      <TicketTranslation />
     </div>
 
     <!-- Scrollable sections: Key Info + Ticket Info + Recent / Similar Tickets -->
@@ -20,6 +16,15 @@
       @scroll.passive="trimScrollSpacer"
     >
       <div ref="scrollContentRef" class="divide-y-[1px]">
+        <!-- Only speaks for a ticket raised through the portal, whose description
+             arrived as a field rather than as an email. Everything that came in as
+             a message is translated inside that message, down in the thread.
+             It lives in the scroller, not the pinned block above: a long
+             description translated in full would otherwise push every field
+             below it off-screen with no way to reach them (B2). Renders nothing
+             without a translation, so divide-y draws no border for it. -->
+        <TicketTranslation class="mb-4" />
+
         <!-- Feedback, only once the contact has rated the ticket -->
         <div v-if="ticket.doc?.feedback_rating">
           <TicketFeedback
