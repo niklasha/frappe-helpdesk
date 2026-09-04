@@ -132,6 +132,9 @@ def get_list_data(
     if doctype == "TP Call Log":
         data = parse_call_logs(data)
 
+    if doctype == "HD Ticket":
+        add_communication_count(data)
+
     fields = frappe.get_meta(doctype).fields
     fields = [field for field in fields if field.fieldtype not in no_value_fields]
     fields = [
@@ -690,3 +693,27 @@ def remove_assignments(doctype: str, name: str, assignees: list[str]):
             assign_to=assign_to,
             status="Cancelled",
         )
+
+
+def add_communication_count(data: list) -> None:
+    """Stamp `communication_count` on every HD Ticket list row.
+
+    A reading of Communication rather than a column kept in step: one grouped
+    query over the page's names, so a page of twenty rows costs one query and
+    every saved view shows the count without asking for it.
+    """
+    names = [row.get("name") for row in data if row.get("name")]
+    counts = {}
+    if names:
+        c = frappe.qb.DocType("Communication")
+        for name, count in (
+            frappe.qb.from_(c)
+            .select(c.reference_name, frappe.query_builder.functions.Count(c.name))
+            .where(c.reference_doctype == "HD Ticket")
+            .where(c.reference_name.isin(names))
+            .groupby(c.reference_name)
+            .run()
+        ):
+            counts[name] = count
+    for row in data:
+        row["communication_count"] = counts.get(row.get("name"), 0)
