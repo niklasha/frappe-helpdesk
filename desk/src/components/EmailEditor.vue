@@ -233,7 +233,11 @@
               >
                 <button
                   class="flex items-center gap-1 rounded p-1 text-ink-gray-8 transition-colors focus-within:ring-0 hover:bg-surface-gray-3 disabled:opacity-50"
-                  :disabled="draftOutbound.loading || isContentEmpty(newEmail)"
+                  :disabled="
+                    draftOutbound.loading ||
+                    Boolean(outboundDraft) ||
+                    isContentEmpty(newEmail)
+                  "
                   @click="draftOutbound.submit()"
                 >
                   <LoadingIndicator
@@ -670,13 +674,34 @@ const needsOutboundTranslation = computed(
     Boolean(replyLanguage.data?.needs_translation)
 );
 
-/** The agent's text as the model should see it: plain, without the signature markup. */
+/**
+ * The agent's text as the model should see it: plain, without the signature.
+ * The signature is the agent's, not the customer's: it is never translated
+ * and never sent to the model. A held draft keeps its own original text, so
+ * a second drafting cannot translate the translation.
+ */
 function draftSourceText(): string {
-  const textEditor = editorRef.value?.editor;
-  if (textEditor?.getText) return textEditor.getText().trim();
-  const doc = new DOMParser().parseFromString(newEmail.value ?? "", "text/html");
-  return (doc.body.textContent ?? "").trim();
+  if (outboundDraft.value) return outboundDraft.value.original_text;
+  const body = htmlToText(newEmail.value ?? "").trim();
+  const signature = emailSignature.value
+    ? htmlToText(emailSignature.value).trim()
+    : "";
+  if (signature && body.endsWith(signature)) {
+    return body.slice(0, body.length - signature.length).trim();
+  }
+  return body;
 }
+
+/** The translated body with the signature once: only when it is not already there. */
+function withSignature(html: string): string {
+  if (!emailSignature.value) return html;
+  const signature = htmlToText(emailSignature.value).trim();
+  if (signature && htmlToText(html).trim().endsWith(signature)) return html;
+  return html + emailSignature.value;
+}
+
+/** The text the last drafting was asked for, kept as the draft's original. */
+const draftRequestText = ref("");
 
 /**
  * Ask for the answer in the customer's language. The server records it as an
@@ -686,10 +711,10 @@ function draftSourceText(): string {
  */
 const draftOutbound = createResource({
   url: "helpdesk.api.translation.draft_outbound",
-  makeParams: () => ({
-    ticket_id: props.ticketId,
-    text: draftSourceText(),
-  }),
+  makeParams: () => {
+    draftRequestText.value = draftSourceText();
+    return { ticket_id: props.ticketId, text: draftRequestText.value };
+  },
   onSuccess: (draft: any) => {
     const translated = draft?.translated_text;
     if (!draft?.needs_translation || !translated) {
@@ -698,7 +723,7 @@ const draftOutbound = createResource({
     }
     outboundDraft.value = {
       translation: draft.translation ?? draft.name ?? null,
-      original_text: draftSourceText(),
+      original_text: draftRequestText.value,
       translated_text: translated,
       source_language: draft.source_language ?? null,
       target_language: draft.target_language ?? replyLanguage.data?.language,
@@ -706,7 +731,7 @@ const draftOutbound = createResource({
     const html = translated.includes("<")
       ? translated
       : `<p>${translated}</p>`;
-    newEmail.value = html + (emailSignature.value ?? "");
+    newEmail.value = withSignature(html);
     focusEditorAtStart();
   },
   onError: (error: any) => {
@@ -720,13 +745,14 @@ function discardOutboundDraft() {
   outboundDraft.value = null;
 }
 
-/** The status "Skicka & markera klar" picked, kept for the fallback send. */
+/** The status "Skicka & markera klar" picked, cleared once the send is answered. */
 const pendingStatus = ref<string | null>(null);
 
 /**
  * Sends the drafted translation: the press of this button *is* the review the
- * Wave 4 rule asks for. When the endpoint is not on this site the reply falls
- * back to the ordinary send, so the agent is never left holding a draft.
+ * Wave 4 rule asks for. A failure is reported and the draft kept: the server
+ * may already have sent the mail, so sending it again from here could double
+ * it or send the untranslated text. The agent decides what happens next.
  */
 const replyTranslated = createResource({
   url: "helpdesk.api.ticket.reply_translated",
@@ -741,14 +767,11 @@ const replyTranslated = createResource({
     pendingStatus.value = null;
     onReplySent();
   },
-  onError: () => {
-    // Missing endpoint or a refused row: send what the editor holds anyway,
-    // keeping the status the agent picked.
-    outboundDraft.value = null;
-    const status = pendingStatus.value;
+  onError: (error: any) => {
     pendingStatus.value = null;
-    if (status) sendAndSetStatus.submit(status);
-    else sendMail.submit();
+    toast.error(
+      error?.messages?.[0] || __("Det översatta svaret kunde inte skickas.")
+    );
   },
 });
 
