@@ -302,6 +302,12 @@ def _sync(ticket_id: str, reclassify: bool) -> None:
                 if not name:
                     raise
                 row = frappe._dict(name=name)
+        # doc.insert casts a None Int to 0; db.set_value writes the NULL as-is
+        # and the column refuses it ("Column 'pages' cannot be null"), so the
+        # second refresh of a PNG failed while the first went through.
+        for field in ("width", "height", "pages", "vector"):
+            if values.get(field) is None:
+                values[field] = 0
         frappe.db.set_value("HD Ticket File", row.name, values, update_modified=True)
     # Rows whose File is gone, and rows for a File that another File now
     # stands in for (the Communication copy of a ticket attachment), leave.
