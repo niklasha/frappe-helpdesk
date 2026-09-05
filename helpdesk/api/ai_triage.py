@@ -159,12 +159,13 @@ def record_triage(
     cache_read_tokens: int | None = None,
     cache_write_tokens: int | None = None,
     ai_cost: float | None = None,
+    cost_known: int | bool | None = 0,
 ) -> dict:
     """Persist a reviewable triage proposal, safely replayable by key.
 
     The engine, the token counts and the cost (Wave 17b) are what the call
-    used and what it charged. A caller that knows none of them leaves them
-    empty, and empty is kept as NULL rather than a zero that reads as free.
+    used and what it charged. `cost_known` says whether the cost is one the
+    desk can vouch for; a 0 cost with the flag down is unpriced, not free.
     """
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     if idempotency_key:
@@ -186,6 +187,7 @@ def record_triage(
         "cache_read_tokens": cache_read_tokens,
         "cache_write_tokens": cache_write_tokens,
         "ai_cost": ai_cost,
+        "cost_known": cost_known,
     }
     doc = frappe.get_doc({
         "doctype": "HD AI Triage Result", "ticket": ticket_id,
@@ -217,7 +219,6 @@ def record_triage(
         **costs,
     })
     doc.insert(ignore_permissions=True)
-    ai_generation.keep_empty_counts("HD AI Triage Result", doc.name, costs)
     return doc.as_dict()
 
 # What of an earlier verdict the model is shown when it reads a reply. The
@@ -489,6 +490,7 @@ TRIAGE_VIEW_FIELDS = (
     "input_tokens",
     "output_tokens",
     "ai_cost",
+    "cost_known",
     "classification",
     "proposed_ticket_type",
     "priority",

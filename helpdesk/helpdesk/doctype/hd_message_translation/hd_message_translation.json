@@ -25,6 +25,7 @@
   "cache_read_tokens",
   "cache_write_tokens",
   "ai_cost",
+  "cost_known",
   "idempotency_key",
   "adopted_from"
  ],
@@ -142,6 +143,13 @@
    "fieldtype": "Currency",
    "label": "AI Cost (USD)",
    "precision": "6",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "cost_known",
+   "fieldtype": "Check",
+   "label": "Cost Known",
    "read_only": 1
   },
   {

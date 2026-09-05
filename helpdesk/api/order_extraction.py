@@ -45,13 +45,6 @@ def record_extraction(
     complete = not missing
     doc = frappe.get_doc({"doctype": "HD Order Extraction", "ticket": ticket_id, "idempotency_key": idempotency_key, "required_fields": json.dumps(required), "missing_fields": json.dumps(missing), "complete": complete, "status": "Ready to create order" if complete else "Needs Review", "ready_for_connector": complete, "corrections": {}, "corrected_on": None, **values})
     doc.insert(ignore_permissions=True)
-    # The count and cost columns stay NULL where nothing was counted (Wave 17b):
-    # an insert would otherwise write the 0 that reads as free.
-    ai_generation.keep_empty_counts(
-        "HD Order Extraction",
-        doc.name,
-        {field: values.get(field) for field in ai_generation.COST_FIELDS},
-    )
     return doc.as_dict()
 
 

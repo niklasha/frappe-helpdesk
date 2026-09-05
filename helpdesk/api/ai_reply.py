@@ -125,6 +125,7 @@ def record_reply_draft(
     cache_read_tokens: int | None = None,
     cache_write_tokens: int | None = None,
     ai_cost: float | None = None,
+    cost_known: int | bool | None = 0,
 ) -> dict:
     """Persist a proposed customer reply for human review, replayable by key."""
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
@@ -143,6 +144,7 @@ def record_reply_draft(
         "cache_read_tokens": cache_read_tokens,
         "cache_write_tokens": cache_write_tokens,
         "ai_cost": ai_cost,
+        "cost_known": cost_known,
     }
     doc = frappe.get_doc(
         {
@@ -165,7 +167,6 @@ def record_reply_draft(
     )
     _apply_auto_reply_policy(doc)
     doc.insert(ignore_permissions=True)
-    ai_generation.keep_empty_counts("HD AI Reply Draft", doc.name, costs)
     return doc.as_dict()
 
 

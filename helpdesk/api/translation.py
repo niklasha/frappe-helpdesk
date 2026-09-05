@@ -149,6 +149,7 @@ def record_translation(
     cache_read_tokens: int | None = None,
     cache_write_tokens: int | None = None,
     ai_cost: float | None = None,
+    cost_known: int | bool | None = 0,
 ) -> dict:
     """Persist a translation next to its original text, replayable by key.
 
@@ -190,6 +191,7 @@ def record_translation(
         "cache_read_tokens": cache_read_tokens,
         "cache_write_tokens": cache_write_tokens,
         "ai_cost": ai_cost,
+        "cost_known": cost_known,
     }
     doc = frappe.get_doc(
         {
@@ -210,7 +212,6 @@ def record_translation(
         }
     )
     doc.insert(ignore_permissions=True)
-    ai_generation.keep_empty_counts("HD Message Translation", doc.name, costs)
     return doc.as_dict()
 
 
@@ -252,6 +253,7 @@ def translate_inbound(
     cache_read_tokens: int | None = None,
     cache_write_tokens: int | None = None,
     ai_cost: float | None = None,
+    cost_known: int | bool | None = 0,
 ) -> dict:
     """Record the translation of a message a customer sent us.
 
@@ -276,6 +278,7 @@ def translate_inbound(
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,
         ai_cost=ai_cost,
+        cost_known=cost_known,
     )
 
 
@@ -439,6 +442,7 @@ def translate_outbound(
     cache_read_tokens: int | None = None,
     cache_write_tokens: int | None = None,
     ai_cost: float | None = None,
+    cost_known: int | bool | None = 0,
 ) -> dict:
     """Record an agent's Swedish reply translated into the customer's language."""
     return record_translation(
@@ -458,6 +462,7 @@ def translate_outbound(
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,
         ai_cost=ai_cost,
+        cost_known=cost_known,
     )
 
 
@@ -561,6 +566,7 @@ TRANSLATION_VIEW_FIELDS = (
     "input_tokens",
     "output_tokens",
     "ai_cost",
+    "cost_known",
     # Whose translation this row wears, when it bought none of its own. The
     # band uses it to stay silent about words the thread already shows.
     "adopted_from",
