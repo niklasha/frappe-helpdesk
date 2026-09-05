@@ -48,6 +48,10 @@ QUEUE = "short"
 # adopting and does the work itself. Generously past a model call, because a
 # job that stops waiting early is a job that pays a second time.
 LOCK_WAIT_SECONDS = 120
+# How long a *request* waits for the same lock. An agent's click must not hang
+# a web request for two minutes behind a worker's model call; a request that
+# finds the ticket busy says so and lets the worker's result land on its own.
+REQUEST_LOCK_WAIT_SECONDS = 3
 LOCK_EXPIRY_SECONDS = 300
 
 
@@ -131,7 +135,7 @@ def enqueue_for_message(doc, method=None) -> None:
         return
     if not ingress_enabled():
         return
-    opening = _is_opening_message(doc.name, doc.reference_name)
+    opening = _is_opening_message(doc.reference_name, strip_html(doc.content or ""))
     try:
         frappe.enqueue(
             "helpdesk.api.ai_ingress.translate_message",
@@ -161,14 +165,26 @@ def translate_message(message: str) -> dict:
     are safe to repeat: the idempotency key is the message, so a retry replays
     the first answer rather than buying a second.
 
-    For the ticket's opening message this never generates on its own. Those
-    words are the ticket's description, and the ticket's chain translates them
-    once and hands the result to this message. If that chain has not run yet
-    when this job is picked up, the job takes the ticket's lock and runs the
-    chain itself — every step of it is keyed, so the ticket's own job then
+    For the ticket's opening message this prefers not to generate on its own.
+    Those words are the ticket's description, and the ticket's chain translates
+    them once and hands the result to this message. If that chain has not run
+    yet when this job is picked up, the job takes the ticket's lock and runs
+    the chain itself — every step of it is keyed, so the ticket's own job then
     finds everything replayed and pays nothing. Waiting for the other job
     instead would deadlock a single worker, which is what this bench runs:
     the job in front of the queue would be waiting for the job behind it.
+
+    "Opening" is decided by content, not by position: the message is the
+    opening one when the ticket's description ends with its words. The first
+    Received message on a ticket opened without a description is a real reply
+    and is translated like any other. And should the chain come back without
+    a row for this message — it judged the ticket readable, the provider did
+    not answer, the description changed since — the message is translated the
+    ordinary way rather than left with nothing.
+
+    Inline, for an agent, this waits only briefly for a lock a worker holds:
+    a click must not hang behind a model call. A busy ticket answers with
+    `"running": True`, and the worker's result lands on its own.
     """
     done = {"message": message, "translated": False, "reason": None}
     row = frappe.db.get_value(
@@ -199,9 +215,9 @@ def translate_message(message: str) -> dict:
         done.update(translated=True, reason="adopted the ticket's own translation")
         return done
 
-    if _is_opening_message(message, ticket_id):
+    if _is_opening_message(ticket_id, text):
         try:
-            with _ticket_lock(ticket_id):
+            with _ticket_lock(ticket_id, _lock_wait()):
                 # Under the lock: a chain that finished while we waited for it
                 # has left a row to adopt, and one that never ran is run here.
                 if _adopt(ticket_id, message, text):
@@ -209,8 +225,11 @@ def translate_message(message: str) -> dict:
                         translated=True, reason="adopted the ticket's own translation"
                     )
                     return done
-                chain = _ingress(ticket_id)
-        except Exception:
+                _ingress(ticket_id)
+        except Exception as exc:
+            if _is_lock_error(exc) and frappe.request:
+                done.update(running=True, reason="the ticket's chain is running")
+                return done
             done["reason"] = "the ticket's chain could not be run"
             frappe.log_error(
                 title="Helpdesk AI ingress",
@@ -218,15 +237,16 @@ def translate_message(message: str) -> dict:
                 f"{frappe.get_traceback()}",
             )
             return done
-        done.update(
-            translated=bool(chain.get("translated")),
-            reason=(
-                "translated with the ticket"
-                if chain.get("translated")
-                else "already readable"
-            ),
-        )
-        return done
+        if _recorded_for(message):
+            done.update(translated=True, reason="translated with the ticket")
+            return done
+        if _already_readable(ticket_id):
+            # The verdict was on the description, which holds these very words.
+            done["reason"] = "already readable"
+            return done
+        # The chain ran and left this message nothing — its translation failed,
+        # or the words no longer match. The ordinary path below is keyed on the
+        # message and is the honest fallback.
 
     try:
         # Since Wave 14 the engine detects the language inside this call — the
@@ -254,17 +274,20 @@ def translate_message(message: str) -> dict:
     return done
 
 
-def run_ingress(ticket_id: str) -> dict:
-    """Detect, translate and triage one ticket. Runs in a worker, not a request.
+def run_ingress(ticket_id: str, wait: int = LOCK_WAIT_SECONDS) -> dict:
+    """Detect, translate and triage one ticket. The queued job's entry point.
 
     Under the ticket's lock, because the opening message's job runs the same
     chain when it is picked up first; see `translate_message`. A lock that
     cannot be had within the wait is logged and the chain runs anyway — every
     step replays on its key, so the worst case is the race this lock exists
     to close, not a ticket left unread.
+
+    `wait` is how long to sit on that lock; the job waits out a model call,
+    a request (`triage_incoming_ticket`) does not — see `_run_now`.
     """
     try:
-        with _ticket_lock(ticket_id):
+        with _ticket_lock(ticket_id, wait):
             return _ingress(ticket_id)
     except Exception as exc:
         if not _is_lock_error(exc):
@@ -275,6 +298,43 @@ def run_ingress(ticket_id: str) -> dict:
             f"{frappe.get_traceback()}",
         )
         return _ingress(ticket_id)
+
+
+def _run_now(ticket_id: str) -> dict:
+    """The chain for a request: a short wait on the lock, then an honest answer.
+
+    A worker holding the ticket's lock is in the middle of a model call, and
+    the agent who clicked must neither wait for it nor start a second one.
+    The reply says the chain is running and what the ticket has so far.
+    """
+    try:
+        with _ticket_lock(ticket_id, REQUEST_LOCK_WAIT_SECONDS):
+            return _ingress(ticket_id)
+    except Exception as exc:
+        if not _is_lock_error(exc):
+            raise
+        return {"ticket": ticket_id, "running": True, **_state(ticket_id)}
+
+
+def _state(ticket_id: str) -> dict:
+    """What the chain has already left on a ticket, for a reply that ran nothing."""
+    return {
+        "translated": bool(
+            frappe.db.exists(
+                "HD Message Translation", {"ticket": ticket_id, "direction": "Inbound"}
+            )
+        ),
+        "triaged": bool(
+            frappe.db.exists(
+                "HD AI Triage Result", {"idempotency_key": f"ingress-triage-{ticket_id}"}
+            )
+        ),
+    }
+
+
+def _lock_wait() -> int:
+    """How long the caller may sit on a ticket's lock: a job waits, a request does not."""
+    return REQUEST_LOCK_WAIT_SECONDS if frappe.request else LOCK_WAIT_SECONDS
 
 
 def _ingress(ticket_id: str) -> dict:
@@ -345,23 +405,26 @@ def triage_incoming_ticket(ticket_id: str) -> dict:
     """Run the ingress chain for one ticket now, for an agent who asks.
 
     The same idempotency keys apply, so asking twice is free and asking after the
-    automation already ran returns what it produced.
+    automation already ran returns what it produced. Asking while the automation
+    is running it returns `"running": True` and what there is so far, rather than
+    holding the request until the worker's model call is over.
     """
-    return run_ingress(ticket_id)
+    return _run_now(ticket_id)
 
 
-def _ticket_lock(ticket_id: str):
+def _ticket_lock(ticket_id: str, wait: int):
     """One holder at a time for a ticket's chain, across workers.
 
     A Redis lock rather than a file lock: a file per ticket would litter the
     site's lock directory for the life of the site, and the cache is where the
     queue already lives. It expires on its own, so a worker killed mid-call
-    cannot hold a ticket's chain hostage.
+    cannot hold a ticket's chain hostage. `wait` is how long acquiring may
+    block before the lock raises instead.
     """
     return frappe.cache().lock(
         f"{JOB_PREFIX}-lock-{ticket_id}",
         timeout=LOCK_EXPIRY_SECONDS,
-        blocking_timeout=LOCK_WAIT_SECONDS,
+        blocking_timeout=wait,
         # A chain that outlived its lock has still run once; releasing a lock
         # somebody else now holds is not a reason to run it again.
         raise_on_release_error=False,
@@ -401,30 +464,33 @@ def _message_key(message: str) -> str:
     return f"ingress-translate-message-{message}"
 
 
-def _is_opening_message(message: str, ticket_id: str) -> bool:
-    """Whether this is the first thing the customer wrote on the ticket.
-
-    First by creation among the Received messages: the one Helpdesk made from
-    the description when the ticket was opened, whose words the ticket's own
-    translation already covers.
-    """
-    first = frappe.get_all(
-        "Communication",
-        filters={
-            "reference_doctype": "HD Ticket",
-            "reference_name": ticket_id,
-            "sent_or_received": "Received",
-        },
-        pluck="name",
-        order_by="creation asc, name asc",
-        limit=1,
+def _recorded_for(message: str) -> bool:
+    """Whether a translation row — generated or adopted — exists for this message."""
+    return bool(
+        frappe.db.exists("HD Message Translation", {"idempotency_key": _message_key(message)})
     )
-    return bool(first) and first[0] == message
+
+
+def _is_opening_message(ticket_id: str, text: str) -> bool:
+    """Whether a message's words are the ones the ticket was opened with.
+
+    Decided by content: the ticket's description ends with the message's text
+    (whitespace aside). Helpdesk makes the opening Communication from the
+    description, so the two carry the same words — and the ticket's own
+    translation already covers them. Position is not enough: a ticket opened
+    without a description has no such mirror, and its first Received message
+    is the customer's first real reply, which must be translated on its own.
+    """
+    wanted = _squashed(text)
+    if not wanted:
+        return False
+    description = frappe.db.get_value("HD Ticket", ticket_id, "description")
+    return _squashed(strip_html(description or "")).endswith(wanted)
 
 
 def _hand_to_opening_message(ticket_id: str) -> str | None:
     """Give the ticket's translation to the message that carries the same words."""
-    row = frappe.get_all(
+    for row in frappe.get_all(
         "Communication",
         filters={
             "reference_doctype": "HD Ticket",
@@ -433,12 +499,11 @@ def _hand_to_opening_message(ticket_id: str) -> str | None:
         },
         fields=["name", "content"],
         order_by="creation asc, name asc",
-        limit=1,
-    )
-    if not row:
-        return None
-    text = strip_html(row[0].content or "").strip()
-    return _adopt(ticket_id, row[0].name, text) if text else None
+    ):
+        text = strip_html(row.content or "").strip()
+        if _is_opening_message(ticket_id, text):
+            return _adopt(ticket_id, row.name, text)
+    return None
 
 
 def _adopt(ticket_id: str, message: str, text: str) -> str | None:
