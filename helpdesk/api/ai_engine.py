@@ -481,12 +481,19 @@ def engine_chain(call: str | None = None) -> list:
     The rows pinned to the call win; failing that the wildcard rows are the
     site's global order; failing that the chain is the single default engine
     this whole table replaces, so a site with no rows behaves as it always did.
+
+    Each step is tried after the enabled filter, not before: a call whose
+    every pinned engine has been switched off falls back to the global order
+    the administrator wrote, not straight past it to the default.
     """
     rows = _route_rows(frappe.get_single(RUNNER_SETTINGS))
-    pinned = [row["engine"] for row in rows if call and row["call"] == call]
-    if not pinned:
-        pinned = [row["engine"] for row in rows if row["call"] == EVERY_CALL]
-    chain = enabled_engines(pinned)
-    if chain:
-        return chain
-    return enabled_engines([default_engine()])
+    candidates = (
+        [row["engine"] for row in rows if call and row["call"] == call],
+        [row["engine"] for row in rows if row["call"] == EVERY_CALL],
+        [default_engine()],
+    )
+    for names in candidates:
+        chain = enabled_engines(names)
+        if chain:
+            return chain
+    return []
