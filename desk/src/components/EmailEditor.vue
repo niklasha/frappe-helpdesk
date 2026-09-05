@@ -201,6 +201,23 @@
                 }
               "
             />
+            <!-- Send and move the ticket to a chosen status in one click -->
+            <Dropdown
+              v-if="doctype === 'HD Ticket' && resolveOptions.length"
+              :options="resolveOptions"
+              placement="top-end"
+            >
+              <Button
+                variant="subtle"
+                :disabled="isDisabled || sendAndSetStatus.loading"
+                :loading="sendAndSetStatus.loading"
+                :label="__('Skicka & markera klar')"
+              >
+                <template #suffix>
+                  <ChevronDownIcon class="h-4 w-4" />
+                </template>
+              </Button>
+            </Dropdown>
           </div>
         </div>
       </div>
@@ -225,6 +242,8 @@ import { useTyping } from "@/composables/realtime";
 import { getUserEmailInfo } from "@/composables/useUserEmailInfo";
 import { replyComposer } from "@/pages/ticket/modalStates";
 import { useAuthStore } from "@/stores/auth";
+import { useTicketStatusStore } from "@/stores/ticketStatus";
+import { HDTicketStatus } from "@/types/doctypes";
 import { __ } from "@/translation";
 import { RenderedSavedReply } from "@/types";
 import {
@@ -237,6 +256,7 @@ import {
 } from "@/utils";
 import { useStorage } from "@vueuse/core";
 import {
+  Dropdown,
   FileUploader,
   LoadingIndicator,
   Tooltip,
@@ -253,6 +273,7 @@ import {
   ref,
   watch,
 } from "vue";
+import ChevronDownIcon from "~icons/lucide/chevron-down";
 import ZapIcon from "~icons/lucide/zap";
 
 // ─── Props & Emits ────────────────────────────────────────────
@@ -442,35 +463,70 @@ function replaceSavedReply(reply: RenderedSavedReply) {
   focusEditorAtStart();
 }
 
+/** The payload both the plain send and "send & mark done" hand to the server. */
+function replyArgs() {
+  return {
+    attachments: attachments.value.map((x) => x.name),
+    from_email: selectedFromEmail.value,
+    to: toEmailsClone.value.join(","),
+    cc: ccEmailsClone.value?.join(","),
+    bcc: bccEmailsClone.value?.join(","),
+    message:
+      newEmail.value +
+      (quotedContentRef.value
+        ? `<p class="reply-to-content"></p><blockquote>${quotedContentRef.value.innerHTML}</blockquote>`
+        : ""),
+  };
+}
+
+function onReplySent() {
+  savedReplyActionsRef.value?.submit();
+  resetState();
+  emit("submit");
+
+  if (isManager) {
+    updateOnboardingStep("reply_on_ticket");
+  }
+}
+
 const sendMail = createResource({
   url: "run_doc_method",
   makeParams: () => ({
     dt: props.doctype,
     dn: props.ticketId,
     method: "reply_via_agent",
-    args: {
-      attachments: attachments.value.map((x) => x.name),
-      from_email: selectedFromEmail.value,
-      to: toEmailsClone.value.join(","),
-      cc: ccEmailsClone.value?.join(","),
-      bcc: bccEmailsClone.value?.join(","),
-      message:
-        newEmail.value +
-        (quotedContentRef.value
-          ? `<p class="reply-to-content"></p><blockquote>${quotedContentRef.value.innerHTML}</blockquote>`
-          : ""),
-    },
+    args: replyArgs(),
   }),
-  onSuccess: () => {
-    savedReplyActionsRef.value?.submit();
-    resetState();
-    emit("submit");
-
-    if (isManager) {
-      updateOnboardingStep("reply_on_ticket");
-    }
-  },
+  onSuccess: onReplySent,
   debounce: 300,
+});
+
+// "Skicka & markera klar": the same reply, followed by the status the agent
+// picked. The server refuses a status the site has not defined.
+const sendAndSetStatus = createResource({
+  url: "helpdesk.api.ticket.reply_and_set_status",
+  makeParams: (status: string) => ({
+    ticket_id: props.ticketId,
+    status,
+    ...replyArgs(),
+  }),
+  onSuccess: onReplySent,
+});
+
+const ticketStatusStore = useTicketStatusStore();
+
+// Resolved statuses first (the default "done"), then the Paused ones such as
+// "Väntar på kund"; the order within each group is the admin's.
+const resolveOptions = computed(() => {
+  const statuses: HDTicketStatus[] =
+    ticketStatusStore.statuses.data?.filter((s: HDTicketStatus) => s.enabled) ??
+    [];
+  const pick = (category: string) =>
+    statuses.filter((s) => s.category === category);
+  return [...pick("Resolved"), ...pick("Paused")].map((s) => ({
+    label: __(s.label_agent),
+    onClick: () => submitMailWithStatus(s.label_agent),
+  }));
 });
 
 const label = computed(() => (sendMail.loading ? "Sending..." : props.label));
@@ -482,7 +538,7 @@ const isDisabled = computed(
     isUploading.value
 );
 
-function submitMail() {
+function canSend(): boolean {
   if (isContentEmpty(newEmail.value) && isContentEmpty(quotedContent.value)) {
     return false;
   }
@@ -496,8 +552,17 @@ function submitMail() {
     );
     return false;
   }
+  return true;
+}
 
+function submitMail() {
+  if (!canSend()) return false;
   sendMail.submit();
+}
+
+function submitMailWithStatus(status: string) {
+  if (!canSend()) return false;
+  sendAndSetStatus.submit(status);
 }
 
 function getInitialContent() {
