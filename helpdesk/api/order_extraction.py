@@ -1,6 +1,7 @@
 import json
 
 import frappe
+from frappe import _
 from frappe.utils import now_datetime
 
 from helpdesk.api import ai_generation
@@ -114,4 +115,42 @@ def correct_extraction(
     doc.status = "Ready to create order" if doc.complete else "Needs Review"
     doc.ready_for_connector = doc.complete
     doc.save(ignore_permissions=True)
+    return doc.as_dict()
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def approve_extraction(extraction_id: str) -> dict:
+    """"Använd i order": an agent vouches for a complete extraction.
+
+    The row is marked ready for the connector with the agent's name and time
+    on it, and the audit log gets an event. Nothing is sent anywhere: the ERP
+    submission is made by `erp_order.submit_order` when a person submits, so
+    this endpoint must never create an HD External Order Submission.
+    """
+    # Local import: the audit log is the only thing this endpoint shares with
+    # governance, and order_extraction is imported by the ingress chain.
+    from helpdesk.api import governance
+
+    doc = frappe.get_doc("HD Order Extraction", extraction_id)
+    frappe.has_permission("HD Ticket", "read", doc=doc.ticket, throw=True)
+    missing = json.loads(doc.missing_fields or "[]")
+    if missing or not doc.complete:
+        frappe.throw(
+            _("Beställningsunderlaget är ofullständigt; följande saknas: {0}").format(
+                ", ".join(missing) or _("okänt")
+            )
+        )
+    doc.approved_by = frappe.session.user
+    doc.approved_on = now_datetime()
+    doc.ready_for_connector = 1
+    doc.status = "Ready to create order"
+    doc.save(ignore_permissions=True)
+    governance.log_automation_event(
+        "approve_extraction",
+        actor="User",
+        reference_doctype="HD Order Extraction",
+        reference_name=doc.name,
+        details={"ticket": doc.ticket},
+    )
     return doc.as_dict()

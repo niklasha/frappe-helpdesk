@@ -80,6 +80,7 @@
       </div>
     </header>
     <TicketClassificationRow v-if="ticket.doc?.name" />
+    <TicketOrderCard v-if="ticket.doc?.name" />
     <div v-if="ticket.doc?.name" class="flex flex-1 overflow-x-hidden">
       <div class="flex flex-1 flex-col overflow-x-hidden">
         <div class="flex-1 flex flex-col">
@@ -270,6 +271,7 @@ import SetContactPhoneModal from "@/components/ticket/SetContactPhoneModal.vue";
 import TicketSLA from "@/components/ticket-agent/TicketSLA.vue";
 import TicketAITriage from "@/components/ticket-agent/TicketAITriage.vue";
 import TicketClassificationRow from "@/components/ticket-agent/TicketClassificationRow.vue";
+import TicketOrderCard from "@/components/ticket-agent/TicketOrderCard.vue";
 import TicketAgentFields from "@/components/ticket/TicketAgentFields.vue";
 import TicketTranslation from "./TicketTranslation.vue";
 import {
