@@ -479,6 +479,14 @@ def generate_json(
     for the same reason. It parses, but it answers nothing, and recording it
     would leave a hollow row that looks like a result somebody could act on.
     """
+    # The demand for JSON is the call's, not the prompt's. A site's tuned
+    # fragment for a call (the order desk's extraction wording, seeded from the
+    # coordinator's document) can end in prose about logo files and never say
+    # "answer with JSON"; the model then answers in prose and the whole
+    # extraction is refused below. So the sentence is appended here whenever
+    # the composed instructions do not already carry it.
+    if JSON_ONLY.split(".")[0] not in instructions and JSON_ONLY.split(".")[0] not in schema_hint:
+        schema_hint = f"{schema_hint}\n\n{JSON_ONLY}".strip()
     response = ai_runner.generate(
         engine=engine, messages=_messages(instructions, schema_hint, content)
     )
