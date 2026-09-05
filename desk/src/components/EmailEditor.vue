@@ -184,6 +184,17 @@
                   <ZapIcon class="h-4 w-4" />
                 </button>
               </Tooltip>
+              <Tooltip :text="__('AI-förslag')">
+                <button
+                  class="flex items-center gap-1 rounded p-1 text-ink-gray-8 transition-colors focus-within:ring-0 hover:bg-surface-gray-3 disabled:opacity-50"
+                  :disabled="suggestReply.loading"
+                  @click="suggestReply.submit()"
+                >
+                  <LoadingIndicator v-if="suggestReply.loading" class="h-4 w-4" />
+                  <SparklesIcon v-else class="h-4 w-4" />
+                  <span class="text-p-xs">{{ __("AI-förslag") }}</span>
+                </button>
+              </Tooltip>
               <div class="h-4 w-[2px] border-s ml-1" />
             </div>
             <EditorFixedMenu :items="fullToolbar" />
@@ -274,6 +285,7 @@ import {
   watch,
 } from "vue";
 import ChevronDownIcon from "~icons/lucide/chevron-down";
+import SparklesIcon from "~icons/lucide/sparkles";
 import ZapIcon from "~icons/lucide/zap";
 
 // ─── Props & Emits ────────────────────────────────────────────
@@ -527,6 +539,32 @@ const resolveOptions = computed(() => {
     label: __(s.label_agent),
     onClick: () => submitMailWithStatus(s.label_agent),
   }));
+});
+
+/**
+ * Ask the backend for the one draft this ticket needs (a completion request
+ * for a half-stated order, or a knowledge reply) and put it in the editor
+ * above whatever the agent has written. Nothing is sent by this button.
+ */
+const suggestReply = createResource({
+  url: "helpdesk.api.ai_reply.suggest_reply",
+  makeParams: () => ({ ticket_id: props.ticketId }),
+  onSuccess: (draft: { body?: string | null; reason?: string }) => {
+    if (!draft?.body) {
+      toast.warning(draft?.reason || __("Inget AI-förslag finns för det här ärendet."));
+      return;
+    }
+    const textEditor = editorRef.value?.editor;
+    const html = draft.body.includes("<") ? draft.body : `<p>${draft.body}</p>`;
+    if (textEditor) {
+      textEditor.chain().focus("start").insertContent(html).run();
+    } else {
+      newEmail.value = html + (newEmail.value ?? "");
+    }
+  },
+  onError: (error: any) => {
+    toast.error(error?.messages?.[0] || __("Kunde inte hämta AI-förslag."));
+  },
 });
 
 const label = computed(() => (sendMail.loading ? "Sending..." : props.label));

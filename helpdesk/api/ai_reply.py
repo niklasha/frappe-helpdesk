@@ -379,3 +379,52 @@ def draft_completion_request(
         confidence=1,
         idempotency_key=idempotency_key,
     )
+
+
+def _newest_extraction(ticket_id: str):
+    """Return the ticket's most recent extraction as a document, or None."""
+    name = frappe.db.get_value(
+        "HD Order Extraction",
+        {"ticket": ticket_id},
+        "name",
+        order_by="creation desc",
+    )
+    return frappe.get_doc("HD Order Extraction", name) if name else None
+
+
+def _missing_of(extraction) -> list:
+    missing = extraction.missing_fields
+    if isinstance(missing, str):
+        missing = json.loads(missing or "[]")
+    return missing or []
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def suggest_reply(ticket_id: str) -> dict:
+    """Draft the one reply this ticket needs and hand it to the editor.
+
+    An order that still lacks details gets the fixed-wording completion
+    request naming only those details, never the engine-generated variant:
+    the released wording is what the auto-reply policy already covers, and
+    an administrator who released it released text they have read. Any other
+    ticket gets a reply grounded in the approved knowledge library when the
+    library has one. Nothing is sent: the result is a draft the agent edits
+    before sending, or a reason why there is none.
+    """
+    frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+    extraction = _newest_extraction(ticket_id)
+    if extraction and _missing_of(extraction):
+        return draft_completion_request(extraction.name)
+
+    question = ai_generation.ticket_text(ticket_id)
+    if question and search_knowledge(question, limit=1):
+        return draft_knowledge_reply(ticket_id=ticket_id, question=question)
+
+    return {
+        "body": None,
+        "reason": _(
+            "Inget förslag: ordern saknar inga uppgifter och kunskapsbiblioteket "
+            "har inget godkänt svar på frågan."
+        ),
+    }
