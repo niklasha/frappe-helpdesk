@@ -20,6 +20,7 @@ from frappe import _
 from frappe.utils import cint, flt, strip_html
 
 from helpdesk.api import ai_engine, ai_runner, governance
+from helpdesk.utils import agent_only
 
 FENCE = "```"
 
@@ -253,6 +254,20 @@ def _prompt(name: str) -> tuple[str, int | str | None]:
     )
 
 
+@frappe.whitelist()
+@agent_only
+def engines_for(call: str | None = None) -> list:
+    """The engines to ask for one call, in the order they should be asked.
+
+    The routes pinned to the call come first, then the site's global order,
+    then the single default engine the table replaces. Only enabled engines
+    survive, and a site with no runner at all has no chain to walk.
+    """
+    if not ai_runner.is_runner_available():
+        return []
+    return ai_engine.engine_chain(call)
+
+
 def engine_or_throw() -> str:
     """Return the engine to generate with, or refuse to generate at all.
 
@@ -262,10 +277,10 @@ def engine_or_throw() -> str:
     """
     if not ai_runner.is_runner_available():
         frappe.throw(_("No AI runner is configured."))
-    engine = ai_engine.default_engine()
-    if not engine:
+    chain = ai_engine.engine_chain(None)
+    if not chain:
         frappe.throw(_("No AI runner is configured: there is no default engine."))
-    return engine
+    return chain[0]
 
 
 def ticket_text(ticket_id: str) -> str:
