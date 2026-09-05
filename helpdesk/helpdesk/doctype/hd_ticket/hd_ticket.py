@@ -135,17 +135,22 @@ class HDTicket(Document):
         self.set_external_mail()
         self.set_raised_by()
         self.set_priority()
-        self.set_first_responded_on()
-        self.set_feedback_values()
-        self.set_default_status()
-        self.set_status_category()
-        self.set_sla()
-
+        # The contact and the customer before the SLA: the SLA is matched on
+        # the priority and its conditions read the customer, so the customer
+        # must be resolved (contact, then sender domain) and the key-account
+        # lift applied before set_sla() looks at either. The lift only touches
+        # a priority that fell through to the default, which set_priority()
+        # has just decided.
         self.validate_portal_contact()
         self.set_contact()
         self.set_customer()
         self.set_customer_from_domain()
         self.lift_key_account_priority()
+        self.set_first_responded_on()
+        self.set_feedback_values()
+        self.set_default_status()
+        self.set_status_category()
+        self.set_sla()
 
     def validate(self):
         self.validate_feedback()
