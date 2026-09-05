@@ -344,6 +344,7 @@ export type TicketTab =
   | "comment"
   | "details"
   | "call"
+  | "customer"
   | "analytics";
 
 export interface TabObject {
