@@ -452,10 +452,14 @@ def retriage_for_files(ticket_id: str) -> dict:
         return done
     key = files_retriage_key(ticket_id, names)
     if not frappe.db.exists("HD AI Triage Result", {"idempotency_key": key}):
+        # Not max() in SELECT: this bench's Frappe refuses function strings
+        # there, and the refusal would have silenced every re-triage.
         newest = frappe.get_all(
             TICKET_FILE,
             filters={"ticket": ticket_id, "relevance": ("in", RELEVANT_FILES)},
-            fields=["max(creation) as creation"],
+            fields=["creation"],
+            order_by="creation desc",
+            limit_page_length=1,
         )
         newest_file = newest[0].creation if newest else None
         seen_by = frappe.db.get_value("HD AI Triage Result", previous, "creation")
