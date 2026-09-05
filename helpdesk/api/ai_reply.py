@@ -4,7 +4,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, now_datetime, strip_html
 
-from helpdesk.api import ai_engine, ai_generation, ai_runner
+from helpdesk.api import ai_generation, ai_runner
 from helpdesk.api.knowledge_library import search_knowledge
 from helpdesk.utils import agent_only
 
@@ -55,16 +55,24 @@ def _reply_messages(instructions, knowledge, question):
     ]
 
 
-def _generated_reply(engine, knowledge, question, prompt_name):
-    """Return the reply the engine wrote, together with its provenance.
+def _generated_reply(engines, knowledge, question, prompt_name):
+    """Return the reply the chain wrote, together with its provenance.
+
+    `engines` is the order to ask, resolved from the call's route the way every
+    other generator does it (Wave 21); the first engine that answers wins, and
+    the provenance names that engine rather than the one asked first.
 
     A failed generation is deliberately not caught: falling back to the raw
     knowledge extract would let an engine that never answered masquerade as one
     that did, so the failure surfaces before any draft exists.
     """
     instructions, prompt_version = ai_generation._prompt(prompt_name)
-    response = ai_runner.generate(
-        engine=engine, messages=_reply_messages(instructions, knowledge, question)
+    response = ai_generation._answered(
+        engines,
+        lambda engine: ai_runner.generate(
+            engine=engine, messages=_reply_messages(instructions, knowledge, question)
+        ),
+        prompt_name,
     )
     text = response.get("text")
     if not text:
@@ -74,7 +82,7 @@ def _generated_reply(engine, knowledge, question, prompt_name):
         "provider": response.get("provider"),
         "model_version": response.get("model"),
         "prompt_version": prompt_version,
-        **ai_generation.usage_fields(response, engine),
+        **ai_generation.usage_fields(response),
     }
 
 
@@ -191,14 +199,20 @@ def draft_knowledge_reply(
     """Draft a reply grounded in the approved knowledge library."""
     articles = search_knowledge(question, limit=limit, category=category)
     sources, knowledge = _approved_knowledge(articles)
-    engine = (
-        ai_engine.default_engine()
+    # The call's own route, not the bare default: a knowledge reply or a
+    # common question follows the order the administrator wrote for it, and
+    # walks the chain like every other caller. Without approved sources or a
+    # runner there is nothing to generate from, and the extract stands as
+    # before.
+    prompt_name = _reply_prompt_name(question_type)
+    engines = (
+        ai_generation.engines_or_throw(prompt_name)
         if sources and ai_runner.is_runner_available()
         else None
     )
     reply = (
-        _generated_reply(engine, knowledge, question, _reply_prompt_name(question_type))
-        if engine
+        _generated_reply(engines, knowledge, question, prompt_name)
+        if engines
         else _extracted_reply(knowledge)
     )
     draft = record_reply_draft(

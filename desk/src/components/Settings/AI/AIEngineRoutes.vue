@@ -109,6 +109,11 @@ const CALLS = [
 const globalChain = ref<string[]>([]);
 // A call missing from this map, or holding null, follows the global order.
 const perCall = reactive<Record<string, string[] | null>>({});
+// Rows for a call this page has no section for: a route written by hand or
+// by a later wave. set_engine_routes replaces the whole table, so they are
+// remembered on load and sent back unchanged on save rather than being
+// silently deleted because the page could not place them.
+const unplaced = ref<Record<string, any>[]>([]);
 
 const engines = createResource({
   url: "helpdesk.api.ai_engine.list_engines",
@@ -143,6 +148,16 @@ function load(rows: Record<string, any>[]) {
   for (const entry of CALLS) {
     perCall[entry.call] = byCall[entry.call] ? chainFor(entry.call) : null;
   }
+  const modelled = new Set([EVERY_CALL, ...CALLS.map((entry) => entry.call)]);
+  unplaced.value = Object.keys(byCall)
+    .filter((call) => !modelled.has(call))
+    .flatMap((call) =>
+      byCall[call].map((row) => ({
+        call,
+        engine: row.engine,
+        priority: row.priority || 0,
+      }))
+    );
 }
 
 function setMode(call: string, mode: string) {
@@ -162,7 +177,8 @@ function rowsToSave() {
   for (const entry of CALLS) {
     if (perCall[entry.call]) push(entry.call, perCall[entry.call] as string[]);
   }
-  return rows;
+  // The routes this page does not model go back exactly as they were read.
+  return rows.concat(unplaced.value);
 }
 
 const saveRoutes = createResource({

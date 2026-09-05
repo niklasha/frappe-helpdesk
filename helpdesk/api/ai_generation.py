@@ -261,10 +261,15 @@ def engines_for(call: str | None = None) -> list:
 
     The routes pinned to the call come first, then the site's global order,
     then the single default engine the table replaces. Only enabled engines
-    survive, and a site with no runner at all has no chain to walk.
+    survive.
+
+    This is the resolved order and nothing else: whether a runner is switched
+    on is a separate fact, and an administrator checking the order they wrote
+    must be able to read it back before the runner is enabled. The role check
+    lives here, on the endpoint; the generators resolve their chain through
+    `ai_engine.engine_chain` directly, so no server-side generation runs a
+    role check inside itself.
     """
-    if not ai_runner.is_runner_available():
-        return []
     return ai_engine.engine_chain(call)
 
 
@@ -783,11 +788,18 @@ def _answered(engines: "list | str", ask, call: str | None = None) -> dict:
     failures: list = []
     unreachable = None
     for name in names:
+        # The runner reports an unreachable engine with frappe.throw, which
+        # also appends the message to frappe.local.message_log; a request that
+        # then succeeds on the next engine would still carry the failed one's
+        # error to the user. What the failed attempt added is dropped before
+        # the next engine is asked, so only the answer that stood is reported.
+        logged = len(frappe.local.message_log)
         try:
             response = ask(name)
         except ai_runner.RunnerUnavailable as exception:
             failures.append((name, str(exception)))
             unreachable = exception
+            del frappe.local.message_log[logged:]
             continue
         response["engine"] = name
         for failed, reason in failures:
