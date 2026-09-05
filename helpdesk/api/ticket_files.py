@@ -296,11 +296,27 @@ def _sync(ticket_id: str, reclassify: bool) -> None:
             except (frappe.UniqueValidationError, frappe.DuplicateEntryError):
                 # Someone else inserted this row between our read and our
                 # write; theirs stands, ours becomes an update of it.
+                #
+                # Read it back locking, on the key that collided. An ordinary
+                # read here answers from this transaction's snapshot, which is
+                # older than the write that just beat us and therefore cannot
+                # see it; the demo turned that into a duplicate key thrown at
+                # whoever opened the ticket page while the worker was syncing.
                 name = frappe.db.get_value(
-                    "HD Ticket File", {"ticket": ticket_id, "file": file.name}, "name"
+                    "HD Ticket File",
+                    {"ticket_file": f"{ticket_id}:{file.name}"},
+                    "name",
+                    for_update=True,
                 )
                 if not name:
-                    raise
+                    # Whatever collided is not a row we can adopt. One file's
+                    # inventory is not worth failing the page that asked for it.
+                    frappe.log_error(
+                        title="Helpdesk ticket files",
+                        message=f"could not adopt the inventory row for {file.name} on {ticket_id}\n\n"
+                        f"{frappe.get_traceback()}",
+                    )
+                    continue
                 row = frappe._dict(name=name)
         # doc.insert casts a None Int to 0; db.set_value writes the NULL as-is
         # and the column refuses it ("Column 'pages' cannot be null"), so the
