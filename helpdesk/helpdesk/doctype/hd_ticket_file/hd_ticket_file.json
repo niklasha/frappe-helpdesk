@@ -4,10 +4,11 @@
  "creation": "2026-09-05 00:00:00.000000",
  "doctype": "DocType",
  "engine": "InnoDB",
- "field_order": ["ticket", "file", "file_name", "file_url", "format", "kind", "vector", "width", "height", "pages", "relevance", "source", "message", "assessment", "assessed_by"],
+ "field_order": ["ticket", "file", "ticket_file", "file_name", "file_url", "format", "kind", "vector", "width", "height", "pages", "relevance", "source", "message", "assessment", "assessed_by"],
  "fields": [
   {"fieldname": "ticket", "fieldtype": "Link", "in_list_view": 1, "label": "Ticket", "options": "HD Ticket", "reqd": 1, "read_only": 1},
   {"fieldname": "file", "fieldtype": "Link", "label": "File", "options": "File", "read_only": 1},
+  {"fieldname": "ticket_file", "fieldtype": "Data", "label": "Ticket File", "unique": 1, "read_only": 1, "description": "ticket:file, one inventory row per attachment"},
   {"fieldname": "file_name", "fieldtype": "Data", "in_list_view": 1, "label": "File Name", "read_only": 1},
   {"fieldname": "file_url", "fieldtype": "Data", "label": "File URL", "read_only": 1},
   {"fieldname": "format", "fieldtype": "Data", "in_list_view": 1, "label": "Format", "read_only": 1},

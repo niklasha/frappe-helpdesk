@@ -191,8 +191,17 @@ def _relevance(verdict: dict) -> str:
 
 
 def _attached_files(ticket_id: str) -> list[dict]:
-    """Every File on the ticket or on one of its Communications."""
-    fields = ["name", "file_name", "file_url", "attached_to_doctype", "attached_to_name"]
+    """Every distinct attachment on the ticket or on one of its Communications.
+
+    A reply with an attachment gives Helpdesk two File rows for one upload —
+    one on the Communication, one on the HD Ticket, same file_url (see
+    HD Ticket.attach_file_with_doc). The inventory wants the attachment, not
+    the bookkeeping: rows sharing a file_url (or, lacking one, a content
+    hash) collapse to one, the HD Ticket-attached row preferred, the oldest
+    otherwise.
+    """
+    fields = ["name", "file_name", "file_url", "content_hash", "attached_to_doctype",
+              "attached_to_name", "creation"]
     rows = frappe.get_all(
         "File",
         filters={"attached_to_doctype": "HD Ticket", "attached_to_name": ticket_id,
@@ -211,7 +220,20 @@ def _attached_files(ticket_id: str) -> list[dict]:
                      "attached_to_name": ["in", messages], "is_folder": 0},
             fields=fields,
         )
-    return rows
+    return _dedupe(rows)
+
+
+def _dedupe(rows: list[dict]) -> list[dict]:
+    def key(file: dict) -> str:
+        return file.file_url or file.content_hash or file.name
+
+    def rank(file: dict) -> tuple:
+        return (0 if file.attached_to_doctype == "HD Ticket" else 1, file.creation, file.name)
+
+    chosen: dict[str, dict] = {}
+    for file in sorted(rows, key=rank):
+        chosen.setdefault(key(file), file)
+    return list(chosen.values())
 
 
 def _content(file_name: str) -> bytes:
@@ -228,7 +250,13 @@ def _sync(ticket_id: str, reclassify: bool) -> None:
     Keyed on the File, so a second run finds its rows rather than adding
     more. With `reclassify` every row is read again from its bytes; without
     it only files not yet in the inventory are opened.
+
+    The GET endpoint and the queued worker both sync, possibly at once, so
+    the ticket's row is locked first: whoever asks first writes, the other
+    waits and then finds the rows. `ticket_file` is unique as a last guard,
+    and a duplicate insert is answered by reading the row that won.
     """
+    frappe.db.get_value("HD Ticket", ticket_id, "name", for_update=True)
     files = _attached_files(ticket_id)
     existing = {
         row.file: row
@@ -259,11 +287,24 @@ def _sync(ticket_id: str, reclassify: bool) -> None:
             "message": file.attached_to_name if file.attached_to_doctype == "Communication" else None,
             **verdict,
         }
-        if row:
-            frappe.db.set_value("HD Ticket File", row.name, values, update_modified=True)
-        else:
-            frappe.get_doc({"doctype": "HD Ticket File", "ticket": ticket_id,
-                            "file": file.name, **values}).insert(ignore_permissions=True)
+        if not row:
+            try:
+                frappe.get_doc({"doctype": "HD Ticket File", "ticket": ticket_id,
+                                "file": file.name, "ticket_file": f"{ticket_id}:{file.name}",
+                                **values}).insert(ignore_permissions=True)
+                continue
+            except (frappe.UniqueValidationError, frappe.DuplicateEntryError):
+                # Someone else inserted this row between our read and our
+                # write; theirs stands, ours becomes an update of it.
+                name = frappe.db.get_value(
+                    "HD Ticket File", {"ticket": ticket_id, "file": file.name}, "name"
+                )
+                if not name:
+                    raise
+                row = frappe._dict(name=name)
+        frappe.db.set_value("HD Ticket File", row.name, values, update_modified=True)
+    # Rows whose File is gone, and rows for a File that another File now
+    # stands in for (the Communication copy of a ticket attachment), leave.
     for file_name, row in existing.items():
         if file_name not in seen:
             frappe.delete_doc("HD Ticket File", row.name, ignore_permissions=True, force=True)
