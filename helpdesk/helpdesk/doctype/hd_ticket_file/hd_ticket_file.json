@@ -1,0 +1,40 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-09-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["ticket", "file", "ticket_file", "file_name", "file_url", "format", "kind", "vector", "width", "height", "pages", "relevance", "source", "message", "assessment", "assessed_by"],
+ "fields": [
+  {"fieldname": "ticket", "fieldtype": "Link", "in_list_view": 1, "label": "Ticket", "options": "HD Ticket", "reqd": 1, "read_only": 1},
+  {"fieldname": "file", "fieldtype": "Link", "label": "File", "options": "File", "read_only": 1},
+  {"fieldname": "ticket_file", "fieldtype": "Data", "label": "Ticket File", "unique": 1, "read_only": 1, "description": "ticket:file, one inventory row per attachment"},
+  {"fieldname": "file_name", "fieldtype": "Data", "in_list_view": 1, "label": "File Name", "read_only": 1},
+  {"fieldname": "file_url", "fieldtype": "Data", "label": "File URL", "read_only": 1},
+  {"fieldname": "format", "fieldtype": "Data", "in_list_view": 1, "label": "Format", "read_only": 1},
+  {"fieldname": "kind", "fieldtype": "Select", "in_list_view": 1, "label": "Kind", "options": "Vektor\nRaster\nDokument\nÖvrigt", "read_only": 1},
+  {"default": "0", "fieldname": "vector", "fieldtype": "Check", "label": "Vector", "read_only": 1},
+  {"fieldname": "width", "fieldtype": "Int", "label": "Width", "read_only": 1},
+  {"fieldname": "height", "fieldtype": "Int", "label": "Height", "read_only": 1},
+  {"fieldname": "pages", "fieldtype": "Int", "label": "Pages", "read_only": 1},
+  {"fieldname": "relevance", "fieldtype": "Select", "label": "Relevance", "options": "Original\nUnderlag\nÖvrigt", "read_only": 1},
+  {"fieldname": "source", "fieldtype": "Select", "label": "Source", "options": "ticket\nmessage", "read_only": 1},
+  {"fieldname": "message", "fieldtype": "Link", "label": "Message", "options": "Communication", "read_only": 1},
+  {"fieldname": "assessment", "fieldtype": "Small Text", "label": "Assessment", "read_only": 1},
+  {"fieldname": "assessed_by", "fieldtype": "Select", "label": "Assessed By", "options": "\nrule\nmodel", "read_only": 1}
+ ],
+ "links": [],
+ "modified": "2026-09-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Helpdesk",
+ "name": "HD Ticket File",
+ "owner": "Administrator",
+ "permissions": [
+  {"create": 1, "delete": 1, "read": 1, "role": "System Manager", "write": 1},
+  {"read": 1, "role": "Agent"}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}

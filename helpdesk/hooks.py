@@ -101,12 +101,20 @@ doc_events = {
         # after_insert makes every inbound email wait on a third party,
         # and a timeout fails the ticket creation itself.
         "after_insert": "helpdesk.api.ai_ingress.enqueue_for_ticket",
+        # Wave 20: the attachment inventory goes with the ticket.
+        "on_trash": "helpdesk.api.ticket_files.on_ticket_trash",
     },
     "Communication": {
         # The replies after the first one. Wave 12 translated the ticket and
         # left the thread in whatever language it arrived in, which read as
         # finished and was half readable.
         "after_insert": "helpdesk.api.ai_ingress.enqueue_for_message",
+    },
+    "File": {
+        # Wave 20 (FILE-01): an attachment on a ticket or on one of its messages
+        # is classified from its bytes, in a worker, never in the insert.
+        "after_insert": "helpdesk.api.ticket_files.enqueue_for_file",
+        "on_trash": "helpdesk.api.ticket_files.on_file_trash",
     },
     "Assignment Rule": {
         "on_trash": "helpdesk.extends.assignment_rule.on_assignment_rule_trash",
