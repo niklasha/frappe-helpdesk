@@ -268,6 +268,36 @@ def engines_for(call: str | None = None) -> list:
     return ai_engine.engine_chain(call)
 
 
+def engines_or_throw(call: str | None = None) -> list:
+    """The chain to ask for one call, or a refusal to generate at all.
+
+    Same refusal as `engine_or_throw`, one call further out: a site with no
+    runner, or none whose engines are enabled for this call, is told plainly
+    that nothing is configured rather than being handed an empty chain that
+    would fail deeper in with a stranger message.
+    """
+    if not ai_runner.is_runner_available():
+        frappe.throw(_("No AI runner is configured."))
+    chain = engines_for(call)
+    if not chain:
+        frappe.throw(_("No AI runner is configured: there is no default engine."))
+    return chain
+
+
+def answering_engine(response: dict, engines) -> str | None:
+    """The engine whose answer this is, out of the chain that was asked.
+
+    The provenance names one engine, and after a failover that is not the
+    engine the caller asked first. The runner's answer names it when it can;
+    otherwise the chain was walked no further than its head.
+    """
+    if isinstance(response, dict) and response.get("engine"):
+        return response["engine"]
+    if isinstance(engines, list):
+        return engines[0] if engines else None
+    return engines
+
+
 def engine_or_throw() -> str:
     """Return the engine to generate with, or refuse to generate at all.
 
@@ -737,7 +767,7 @@ def attribute(
 
 
 def generate_text(
-    engine: str, instructions: str, content: str, task_hint: str
+    engine: str | list, instructions: str, content: str, task_hint: str
 ) -> tuple[str, dict]:
     """Ask the engine for one piece of finished prose, with its provenance.
 
@@ -745,6 +775,10 @@ def generate_text(
     message recorded as the model's own would reach a customer looking like
     something somebody meant to write.
     """
+    # Wave 21 (aieng-15): callers pass their call's whole engine chain. Until
+    # the failover slice lands only its head is asked; that slice replaces
+    # this one line with the walk over the chain.
+    engine = engine[0] if isinstance(engine, list) else engine
     response = ai_runner.generate(
         engine=engine, messages=_messages(instructions, task_hint, content)
     )
@@ -755,7 +789,7 @@ def generate_text(
 
 
 def generate_json(
-    engine: str,
+    engine: str | list,
     instructions: str,
     content: str,
     schema_hint: str,
@@ -781,6 +815,11 @@ def generate_json(
     # "answer with JSON"; the model then answers in prose and the whole
     # extraction is refused below. So the sentence is appended here whenever
     # the composed instructions do not already carry it.
+    # Wave 21 (aieng-15): callers pass their call's whole engine chain. Until
+    # the failover slice lands only its head is asked; that slice replaces
+    # this one line with the walk over the chain.
+    engine = engine[0] if isinstance(engine, list) else engine
+
     if JSON_ONLY.split(".")[0] not in instructions and JSON_ONLY.split(".")[0] not in schema_hint:
         schema_hint = f"{schema_hint}\n\n{JSON_ONLY}".strip()
     try:

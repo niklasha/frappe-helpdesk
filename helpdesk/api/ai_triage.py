@@ -317,7 +317,7 @@ def triage_ticket(
     stored = ai_generation.replayed("HD AI Triage Result", idempotency_key)
     if stored:
         return frappe.get_doc("HD AI Triage Result", stored).as_dict()
-    engine = ai_generation.engine_or_throw()
+    engines = ai_generation.engines_or_throw(ai_generation.TICKET_TRIAGE)
     instructions, prompt_version = ai_generation._prompt(ai_generation.TICKET_TRIAGE)
     if source_message:
         previous = previous or latest_triage(ticket_id)
@@ -340,7 +340,7 @@ def triage_ticket(
     files_text, image_parts = ai_generation.attachments_context(ticket_id)
     content = ai_generation.with_attachments(content, files_text)
     answer, response = ai_generation.generate_json(
-        engine,
+        engines,
         instructions,
         content,
         _schema_with_catalogue(),
@@ -352,7 +352,9 @@ def triage_ticket(
     )
     if confidence_threshold is None:
         confidence_threshold = DEFAULT_CONFIDENCE_THRESHOLD
-    generation = ai_generation.provenance(response, prompt_version, engine)
+    generation = ai_generation.provenance(
+        response, prompt_version, ai_generation.answering_engine(response, engines)
+    )
     result = record_triage(
         ticket_id=ticket_id,
         idempotency_key=idempotency_key,

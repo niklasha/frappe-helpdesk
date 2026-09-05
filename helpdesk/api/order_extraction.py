@@ -139,7 +139,7 @@ def extract_order(
     stored = ai_generation.replayed("HD Order Extraction", idempotency_key)
     if stored:
         return frappe.get_doc("HD Order Extraction", stored).as_dict()
-    engine = ai_generation.engine_or_throw()
+    engines = ai_generation.engines_or_throw(ai_generation.ORDER_EXTRACTION)
     instructions, prompt_version = ai_generation._prompt(
         ai_generation.ORDER_EXTRACTION
     )
@@ -147,7 +147,7 @@ def extract_order(
     # 20, FILE-02), so original_files and its assessment are about the files.
     files_text, image_parts = ai_generation.attachments_context(ticket_id)
     answer, response = ai_generation.generate_json(
-        engine,
+        engines,
         instructions,
         ai_generation.with_attachments(
             _extraction_text(ticket_id, source_message), files_text
@@ -157,7 +157,9 @@ def extract_order(
         image_parts=image_parts,
     )
     details = {field: answer[field] for field in EXTRACTION_FIELDS if field in answer}
-    generation = ai_generation.provenance(response, prompt_version, engine)
+    generation = ai_generation.provenance(
+        response, prompt_version, ai_generation.answering_engine(response, engines)
+    )
     result = record_extraction(
         ticket_id=ticket_id,
         idempotency_key=idempotency_key,

@@ -313,18 +313,20 @@ def _inbound_hint(target_language):
 
 def _detected_translation(original_text, target_language):
     """Return the engine's combined verdict on one message, with provenance."""
-    engine = ai_generation.engine_or_throw()
+    engines = ai_generation.engines_or_throw(ai_generation.TRANSLATION_INBOUND)
     instructions, prompt_version = ai_generation._prompt(
         ai_generation.TRANSLATION_INBOUND
     )
     answer, response = ai_generation.generate_json(
-        engine,
+        engines,
         instructions,
         original_text,
         _inbound_hint(target_language),
         required_keys=("language",),
     )
-    return answer, ai_generation.provenance(response, prompt_version, engine)
+    return answer, ai_generation.provenance(
+        response, prompt_version, ai_generation.answering_engine(response, engines)
+    )
 
 
 def _generated_translation(original_text, source_language, target_language, prompt_name):
@@ -334,15 +336,19 @@ def _generated_translation(original_text, source_language, target_language, prom
     translation's place would read, to an agent, exactly like a message that
     needed no translation.
     """
-    engine = ai_generation.engine_or_throw()
+    # The chain is the one pinned to this call — the outbound fragment and
+    # the inbound one are separate calls, and may be routed apart.
+    engines = ai_generation.engines_or_throw(prompt_name)
     instructions, prompt_version = ai_generation._prompt(prompt_name)
     text, response = ai_generation.generate_text(
-        engine,
+        engines,
         instructions,
         original_text,
         _translation_hint(source_language, target_language),
     )
-    return text, ai_generation.provenance(response, prompt_version, engine)
+    return text, ai_generation.provenance(
+        response, prompt_version, ai_generation.answering_engine(response, engines)
+    )
 
 
 @frappe.whitelist(methods=["POST"])
