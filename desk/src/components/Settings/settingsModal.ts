@@ -31,9 +31,11 @@ import { useAuthStore } from "@/stores/auth";
 import General from "./General/General.vue";
 import SettingsGear from "~icons/lucide/settings";
 import ZapIcon from "~icons/lucide/zap";
+import ListOrderedIcon from "~icons/lucide/list-ordered";
 import ProfilePage from "./Profile/ProfilePage.vue";
 import Preferences from "./Preferences/Preferences.vue";
 import AIEngines from "./AI/AIEngines.vue";
+import AIEngineRoutes from "./AI/AIEngineRoutes.vue";
 import AIPrompts from "./AI/AIPrompts.vue";
 import MCPServers from "./AI/MCPServers.vue";
 import SparklesIcon from "~icons/lucide/sparkles";
@@ -149,6 +151,11 @@ export const tabs = computed(() => {
           label: __("AI Engines"),
           icon: markRaw(SparklesIcon),
           component: markRaw(AIEngines),
+        },
+        {
+          label: __("Motorordning"),
+          icon: markRaw(ListOrderedIcon),
+          component: markRaw(AIEngineRoutes),
         },
         {
           label: __("AI Prompts"),
