@@ -119,7 +119,7 @@ class HDAIEngine(Document):
             frappe.throw(
                 _("OAuth authentication needs an access token environment reference or an inline access token.")
             )
-        if any(given) and self.auth_oauth_provider and not self.flags.get("token_from_grant"):
+        if self.typed_beside_a_provider() and not self.flags.get("token_from_grant"):
             # The grant writes this field, so a typed value is either about to be
             # overwritten or was never a token at all — a password manager filling
             # the box is the way that happens in practice, and it leaves an engine
@@ -132,6 +132,25 @@ class HDAIEngine(Document):
             )
         self.validate_oauth_provider()
         self.validate_oauth_refresh()
+
+    def typed_beside_a_provider(self) -> bool:
+        """Whether this save carries a token somebody typed next to a provider.
+
+        Not "is the token box filled": Frappe keeps a password field's secret in
+        __Auth and leaves a dummy string in the column, so a connected engine's
+        box is never empty again. Asking the blunt question refused every later
+        save the administrator made — the tariff, the model, the enabled flag —
+        on exactly the engines the grant had just made work. What the rule is
+        aimed at is a value that arrived in this save, which is what a password
+        manager's autofill produces and what a reload of the grant's own token
+        never does.
+        """
+        if not self.auth_oauth_provider:
+            return False
+        token = self.auth_access_token
+        if token and not self.is_dummy_password(token) and self.has_value_changed("auth_access_token"):
+            return True
+        return bool(self.auth_access_token_env) and self.has_value_changed("auth_access_token_env")
 
     def validate_oauth_provider(self):
         """Refuse an engine the linked provider's own backend would contradict.
