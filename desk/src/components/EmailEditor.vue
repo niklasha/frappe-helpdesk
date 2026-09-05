@@ -98,6 +98,37 @@
 
         <!-- Editor content + quoted reply -->
         <div class="overflow-y-auto min-h-[7rem] max-h-[30vh] flex flex-col">
+          <!--
+            Once a translation is drafted the editor holds the customer's
+            language, which the agent cannot read. So the text they wrote stays
+            visible above it and both blocks are labelled with their language:
+            nobody sends a language they cannot read without seeing what it was
+            made from.
+          -->
+          <div
+            v-if="outboundDraft"
+            class="mx-6 md:mx-5 mt-3 rounded border border-outline-gray-2 bg-surface-gray-1 p-2 text-p-xs text-ink-gray-6"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <span class="font-medium text-ink-gray-7">
+                {{ __("Din text") }} ({{
+                  languageName(outboundDraft.source_language)
+                }})
+              </span>
+              <button
+                class="text-ink-gray-5 underline"
+                @click="discardOutboundDraft()"
+              >
+                {{ __("Ångra översättningen") }}
+              </button>
+            </div>
+            <div class="mt-1 whitespace-pre-wrap">
+              {{ outboundDraft.original_text }}
+            </div>
+            <div class="mt-2 font-medium text-ink-gray-7">
+              {{ __("Skickas på") }} {{ languageName(outboundDraft.target_language) }}
+            </div>
+          </div>
           <div class="flex-1">
             <EditorContent
               :class="[
@@ -195,6 +226,26 @@
                   <span class="text-p-xs">{{ __("AI-förslag") }}</span>
                 </button>
               </Tooltip>
+              <!-- Only offered when the customer reads another language -->
+              <Tooltip
+                v-if="needsOutboundTranslation"
+                :text="__('Svara på kundens språk')"
+              >
+                <button
+                  class="flex items-center gap-1 rounded p-1 text-ink-gray-8 transition-colors focus-within:ring-0 hover:bg-surface-gray-3 disabled:opacity-50"
+                  :disabled="draftOutbound.loading || isContentEmpty(newEmail)"
+                  @click="draftOutbound.submit()"
+                >
+                  <LoadingIndicator
+                    v-if="draftOutbound.loading"
+                    class="h-4 w-4"
+                  />
+                  <LanguagesIcon v-else class="h-4 w-4" />
+                  <span class="text-p-xs">{{
+                    __("Svara på kundens språk")
+                  }}</span>
+                </button>
+              </Tooltip>
               <div class="h-4 w-[2px] border-s ml-1" />
             </div>
             <EditorFixedMenu :items="fullToolbar" />
@@ -204,7 +255,7 @@
             <Button
               variant="solid"
               :disabled="isDisabled"
-              :loading="sendMail.loading"
+              :loading="sendMail.loading || replyTranslated.loading"
               :label="label"
               @click="
                 () => {
@@ -287,6 +338,7 @@ import {
 import ChevronDownIcon from "~icons/lucide/chevron-down";
 import SparklesIcon from "~icons/lucide/sparkles";
 import ZapIcon from "~icons/lucide/zap";
+import LanguagesIcon from "~icons/lucide/languages";
 
 // ─── Props & Emits ────────────────────────────────────────────
 const props = defineProps({
@@ -567,6 +619,140 @@ const suggestReply = createResource({
   },
 });
 
+// ---------------------------------------------------------------------------
+// The answer in the customer's language
+// ---------------------------------------------------------------------------
+
+/** Language codes the desk meets often; anything else is shown as its code. */
+const LANGUAGE_NAMES: Record<string, string> = {
+  sv: "svenska",
+  no: "norska",
+  nb: "norska",
+  nn: "norska",
+  da: "danska",
+  fi: "finska",
+  en: "engelska",
+  de: "tyska",
+  fr: "franska",
+  es: "spanska",
+  nl: "nederländska",
+  pl: "polska",
+};
+
+function languageName(code?: string | null): string {
+  if (!code) return __("okänt språk");
+  return LANGUAGE_NAMES[code.toLowerCase()] ?? code;
+}
+
+type OutboundDraft = {
+  translation: string | null;
+  original_text: string;
+  translated_text: string;
+  source_language: string | null;
+  target_language: string | null;
+};
+
+/** The drafted translation, unreviewed and unsent until the agent presses send. */
+const outboundDraft = ref<OutboundDraft | null>(null);
+
+// Which language this ticket is answered in, and where that reading came from.
+// Asked once when the ticket loads and kept, because the button's presence is
+// the whole point: no reading, no button.
+const replyLanguage = createResource({
+  url: "helpdesk.api.translation.reply_language",
+  makeParams: () => ({ ticket_id: props.ticketId }),
+  auto: false,
+});
+
+const needsOutboundTranslation = computed(
+  () =>
+    props.doctype === "HD Ticket" &&
+    Boolean(replyLanguage.data?.needs_translation)
+);
+
+/** The agent's text as the model should see it: plain, without the signature markup. */
+function draftSourceText(): string {
+  const textEditor = editorRef.value?.editor;
+  if (textEditor?.getText) return textEditor.getText().trim();
+  const doc = new DOMParser().parseFromString(newEmail.value ?? "", "text/html");
+  return (doc.body.textContent ?? "").trim();
+}
+
+/**
+ * Ask for the answer in the customer's language. The server records it as an
+ * unreviewed Outbound `HD Message Translation`; nothing leaves the building
+ * here. The translation goes into the editor and the agent's own text stays
+ * above it.
+ */
+const draftOutbound = createResource({
+  url: "helpdesk.api.translation.draft_outbound",
+  makeParams: () => ({
+    ticket_id: props.ticketId,
+    text: draftSourceText(),
+  }),
+  onSuccess: (draft: any) => {
+    const translated = draft?.translated_text;
+    if (!draft?.needs_translation || !translated) {
+      toast.info(__("Kunden läser samma språk som du skriver."));
+      return;
+    }
+    outboundDraft.value = {
+      translation: draft.translation ?? draft.name ?? null,
+      original_text: draftSourceText(),
+      translated_text: translated,
+      source_language: draft.source_language ?? null,
+      target_language: draft.target_language ?? replyLanguage.data?.language,
+    };
+    const html = translated.includes("<")
+      ? translated
+      : `<p>${translated}</p>`;
+    newEmail.value = html + (emailSignature.value ?? "");
+    focusEditorAtStart();
+  },
+  onError: (error: any) => {
+    toast.error(
+      error?.messages?.[0] || __("Kunde inte översätta svaret.")
+    );
+  },
+});
+
+function discardOutboundDraft() {
+  outboundDraft.value = null;
+}
+
+/** The status "Skicka & markera klar" picked, kept for the fallback send. */
+const pendingStatus = ref<string | null>(null);
+
+/**
+ * Sends the drafted translation: the press of this button *is* the review the
+ * Wave 4 rule asks for. When the endpoint is not on this site the reply falls
+ * back to the ordinary send, so the agent is never left holding a draft.
+ */
+const replyTranslated = createResource({
+  url: "helpdesk.api.ticket.reply_translated",
+  makeParams: (status?: string) => ({
+    ticket_id: props.ticketId,
+    translation_id: outboundDraft.value?.translation,
+    status,
+    ...replyArgs(),
+  }),
+  onSuccess: () => {
+    outboundDraft.value = null;
+    pendingStatus.value = null;
+    onReplySent();
+  },
+  onError: () => {
+    // Missing endpoint or a refused row: send what the editor holds anyway,
+    // keeping the status the agent picked.
+    outboundDraft.value = null;
+    const status = pendingStatus.value;
+    pendingStatus.value = null;
+    if (status) sendAndSetStatus.submit(status);
+    else sendMail.submit();
+  },
+});
+
+
 const label = computed(() => (sendMail.loading ? "Sending..." : props.label));
 
 const isDisabled = computed(
@@ -595,11 +781,22 @@ function canSend(): boolean {
 
 function submitMail() {
   if (!canSend()) return false;
+  // A drafted translation is sent through the door that reviews and sends in
+  // the same motion; without one this is the ordinary reply.
+  if (outboundDraft.value?.translation) {
+    replyTranslated.submit();
+    return;
+  }
   sendMail.submit();
 }
 
 function submitMailWithStatus(status: string) {
   if (!canSend()) return false;
+  if (outboundDraft.value?.translation) {
+    pendingStatus.value = status;
+    replyTranslated.submit(status);
+    return;
+  }
   sendAndSetStatus.submit(status);
 }
 
@@ -641,6 +838,7 @@ function addToReply(
 
 // Staged actions are left to `submit()`, which unstages them either way
 function resetState() {
+  outboundDraft.value = null;
   newEmail.value = emailSignature.value ? emailSignature.value : null;
   attachments.value = [];
   quotedContent.value = null;
@@ -649,6 +847,7 @@ function resetState() {
 }
 
 function handleDiscard() {
+  outboundDraft.value = null;
   attachments.value = [];
   savedReplyActionsRef.value?.clear();
   newEmail.value = getInitialContent();
@@ -772,6 +971,9 @@ onMounted(() => {
   // Published for the command palette, which cannot reach `editorRef` from
   // module scope. See modalStates.ts.
   replyComposer.value = applySavedReplies;
+  if (props.doctype === "HD Ticket" && props.ticketId) {
+    replyLanguage.fetch();
+  }
   if (quotedContent.value) {
     nextTick(() => {
       if (quotedContentRef.value) {
