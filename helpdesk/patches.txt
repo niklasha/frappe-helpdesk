@@ -63,6 +63,7 @@ helpdesk.patches.set_wave11_codex_offline_access
 helpdesk.patches.set_wave11_engine_dialect
 helpdesk.patches.set_wave12_language_names
 helpdesk.patches.set_wave14_inbound_prompt
+helpdesk.patches.set_wave17_triage_prompt
 helpdesk.patches.seed_wave15_order_desk_types
 helpdesk.patches.set_wave15_classification_groups
 helpdesk.patches.seed_wave15_order_desk_rules

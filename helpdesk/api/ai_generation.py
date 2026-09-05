@@ -25,6 +25,20 @@ JSON_ONLY = (
     "when the message does not say what it should be; never invent a value."
 )
 
+# The order coordinator's rule for a customer reply on an open quote or proof
+# (Wave 17, B12). The demo filed "godkänner offerten, men gör västarna gröna" as
+# a quote change because nobody had told the model an approval with changes is
+# still an approval. Shared by the built-in wording and the site seed, so the
+# two say the same thing.
+TRIAGE_APPROVAL_RULE = (
+    "A customer reply that approves a proof or quote while asking for changes "
+    "is still Korrektur godkänt: an approval with changes is an approval, and "
+    "the desk makes the changes before the order. A change of price, quantity "
+    "or delivery without a proof in play is Offertändring. A reply that only "
+    "supplies details the desk asked for, such as a size or a quantity, keeps "
+    "the earlier classification of the thread."
+)
+
 TEXT_ONLY = (
     "Answer with the finished text and nothing else: no preamble, no "
     "explanation, and no detail the material you were given does not support."
@@ -94,7 +108,10 @@ PROMPTS = {
             "You triage incoming messages for a Swedish print shop's helpdesk. "
             "Read the ticket and judge what it is about, how urgent it is, and "
             "what a colleague would need to know before picking it up. Base "
-            "every field on what the ticket actually says.\n\n" + JSON_ONLY
+            "every field on what the ticket actually says.\n\n"
+            + TRIAGE_APPROVAL_RULE
+            + "\n\n"
+            + JSON_ONLY
         ),
     },
     ORDER_EXTRACTION: {
