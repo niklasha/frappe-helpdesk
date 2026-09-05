@@ -695,9 +695,15 @@ def provenance(
     With the engine named, the answer's token counts, their cost and whether
     that cost is known travel with the provenance (Wave 17b); a caller that
     names no engine records the tokens with `cost_known` 0.
+
+    Since Wave 21 the answer carries the engine that produced it, because a
+    chain may have moved on from the one the caller asked first. A caller that
+    names none is told by the answer itself, so the cost lands on the engine
+    that was actually spent.
     """
     if not response.get("model"):
         frappe.throw(_("The AI engine did not identify itself."))
+    engine = engine or response.get("engine")
     return {
         "provider": response.get("provider"),
         "model_version": response.get("model"),
