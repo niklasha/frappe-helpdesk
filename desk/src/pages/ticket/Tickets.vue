@@ -249,8 +249,8 @@ const options = computed(() => ({
           h("span", { class: "truncate text-xs text-ink-gray-5" }, [
             __("{0} meddelanden", [count]),
             " \u00b7 ",
-            // file count arrives with W20 (attachments on the list row); a dash until then
-            __("Filer") + ": \u2013",
+            // W20: files the inventory marks relevant (helpdesk.api.doc.add_file_count)
+            __("{0} relevanta filer", [Number(row.file_count ?? 0)]),
           ]),
         ]);
       },

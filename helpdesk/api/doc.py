@@ -134,6 +134,7 @@ def get_list_data(
 
     if doctype == "HD Ticket":
         add_communication_count(data)
+        add_file_count(data)
 
     fields = frappe.get_meta(doctype).fields
     fields = [field for field in fields if field.fieldtype not in no_value_fields]
@@ -717,3 +718,35 @@ def add_communication_count(data: list) -> None:
             counts[name] = count
     for row in data:
         row["communication_count"] = counts.get(row.get("name"), 0)
+
+
+def add_file_count(data: list) -> None:
+    """Stamp `file_count` on every HD Ticket list row (sketch S/2).
+
+    Counts the rows of the ticket's file inventory (HD Ticket File, kept by
+    helpdesk.api.ticket_files) whose relevance is not "Övrigt" — the same
+    files the Arbetsunderlag strip calls relevant, so the list and the ticket
+    page never disagree. One grouped query per page, like the message count.
+    The inventory table belongs to a sibling slice: when it is not installed
+    yet every row simply reads 0.
+    """
+    names = [row.get("name") for row in data if row.get("name")]
+    counts = {}
+    if names and frappe.db.table_exists("HD Ticket File"):
+        f = frappe.qb.DocType("HD Ticket File")
+        try:
+            rows = (
+                frappe.qb.from_(f)
+                .select(f.ticket, frappe.query_builder.functions.Count(f.name))
+                .where(f.ticket.isin(names))
+                .where((f.relevance != "Övrigt") | f.relevance.isnull())
+                .groupby(f.ticket)
+                .run()
+            )
+        except Exception:
+            frappe.log_error(title="add_file_count", message=frappe.get_traceback())
+            rows = []
+        for name, count in rows:
+            counts[name] = count
+    for row in data:
+        row["file_count"] = counts.get(row.get("name"), 0)

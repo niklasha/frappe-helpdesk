@@ -3,6 +3,7 @@
     <TicketHeader :viewers="viewers" />
     <TicketClassificationRow />
     <TicketOrderCard />
+    <TicketWorkMaterial />
     <div class="flex-1 min-h-0 flex overflow-hidden">
       <div class="flex-1 flex flex-col overflow-hidden">
         <!-- Tabs & Communication Area -->
@@ -55,6 +56,7 @@ import TicketIcon from "@/components/icons/TicketIcon.vue";
 import TicketActivityPanel from "@/components/ticket-agent/TicketActivityPanel.vue";
 import TicketClassificationRow from "@/components/ticket-agent/TicketClassificationRow.vue";
 import TicketOrderCard from "@/components/ticket-agent/TicketOrderCard.vue";
+import TicketWorkMaterial from "@/components/ticket-agent/TicketWorkMaterial.vue";
 import TicketHeader from "@/components/ticket-agent/TicketHeader.vue";
 import TicketSidebar from "@/components/ticket-agent/TicketSidebar.vue";
 import SetContactPhoneModal from "@/components/ticket/SetContactPhoneModal.vue";
