@@ -184,10 +184,13 @@ const makeCall = inject<() => void>("makeCall");
 // because folding away what someone just typed reads as data loss.
 const showAll = ref(false);
 
-// How many activities sit above the newest message body — the ones the fold
-// hides. Independent of `showAll`, so the button keeps its count and can fold
-// the thread back up again.
-const foldedCount = computed(() => {
+// The rows that read as messages: what the button's count promises to reveal.
+// History rows and views are folded with them but not counted, so "Tidigare ·
+// 7" never means one older mail behind six status changes.
+const MESSAGE_TYPES = ["email", "feedback", "comment"];
+
+// Where the newest message body starts: everything above it is folded.
+const foldIndex = computed(() => {
   const list = props.activities || [];
   for (let i = list.length - 1; i >= 0; i--) {
     if (["email", "feedback"].includes(list[i].type)) return i;
@@ -195,9 +198,24 @@ const foldedCount = computed(() => {
   return 0;
 });
 
+// How many messages the fold hides. Independent of `showAll`, so the button
+// keeps its count and can fold the thread back up again.
+const foldedCount = computed(() => {
+  const list = props.activities || [];
+  return list
+    .slice(0, foldIndex.value)
+    .filter((activity) => MESSAGE_TYPES.includes(activity.type)).length;
+});
+
+// Where the thread is actually cut. The button is what makes folded rows
+// reachable again, and it only appears when a message is hidden, so a thread
+// whose older rows are all history stays whole instead of losing them behind
+// a button nobody is shown.
+const cutIndex = computed(() => (foldedCount.value ? foldIndex.value : 0));
+
 const visibleActivities = computed(() => {
   const list = props.activities || [];
-  return showAll.value ? list : list.slice(foldedCount.value);
+  return showAll.value ? list : list.slice(cutIndex.value);
 });
 
 // A different tab (Emails / Comments / Calls) is a different thread; it opens
@@ -261,6 +279,9 @@ function scrollToLatestActivity() {
 function scrollToHash() {
   const elementId = linkedActivityId();
   if (elementId) {
+    // A folded activity is not in the DOM, so the link would resolve to
+    // nothing. Unfold first, then wait for the rows to render.
+    showAll.value = true;
     nextTick(() => {
       // Wait for activities to be rendered
       setTimeout(() => {
@@ -289,6 +310,7 @@ function scrollToHash() {
 watch(
   () => [route.hash, route.query.highlight],
   () => {
+    if (linkedActivityId()) showAll.value = true;
     scrollToLatestActivity();
   }
 );
