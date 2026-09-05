@@ -384,3 +384,109 @@ def registry_document(include_secrets: int | bool = 0) -> dict:
         _provider(engine, include_secrets=include_secrets) for engine in engines
     ]
     return document
+
+
+# The chain of engines a call is asked in, written on the runner settings
+# single as a child table (Wave 21). One reserved call name, "*", carries the
+# order that applies to every call with no order of its own: a second doctype
+# for "the global order" would only be a second place to look.
+RUNNER_SETTINGS = "HD AI Runner Settings"
+ROUTES_FIELD = "engine_routes"
+ROUTE_DOCTYPE = "HD AI Engine Route"
+EVERY_CALL = "*"
+ROUTE_FIELDS = ("call", "engine", "priority")
+
+
+def _route_rows(doc) -> list:
+    """The stored chain as plain rows, in the administrator's order."""
+    rows = [
+        {
+            "call": (row.call or "").strip(),
+            "engine": row.engine,
+            "priority": cint(row.priority),
+        }
+        for row in (doc.get(ROUTES_FIELD) or [])
+    ]
+    return sorted(rows, key=lambda row: row["priority"])
+
+
+@frappe.whitelist()
+@agent_only
+def engine_routes() -> list:
+    """Return the configured engine order, lowest priority number first."""
+    return _route_rows(frappe.get_single(RUNNER_SETTINGS))
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def set_engine_routes(routes: list | str | None = None) -> list:
+    """Replace the whole engine order, and return it as it now stands.
+
+    The table is replaced rather than merged because the order is the thing
+    being configured: a chain half-written by one editor and half left over
+    from another is not an order anybody chose.
+    """
+    _require_admin()
+    if isinstance(routes, str):
+        routes = json.loads(routes)
+    doc = frappe.get_single(RUNNER_SETTINGS)
+    doc.set(ROUTES_FIELD, [])
+    for route in routes or []:
+        call = (route.get("call") or EVERY_CALL).strip() or EVERY_CALL
+        engine = route.get("engine")
+        if not engine:
+            frappe.throw(_("An engine route must name an engine."))
+        doc.append(
+            ROUTES_FIELD,
+            {"call": call, "engine": engine, "priority": cint(route.get("priority"))},
+        )
+    doc.save(ignore_permissions=True)
+    log_configuration_change(
+        RUNNER_SETTINGS,
+        RUNNER_SETTINGS,
+        details={"engine_routes": _route_rows(doc)},
+    )
+    return _route_rows(doc)
+
+
+def enabled_engines(names) -> list:
+    """Keep only the engines that are switched on, in the order given.
+
+    An engine an administrator disabled has to leave every chain it appears
+    in, or switching one off would break the calls routed through it instead
+    of merely stopping them from using it.
+    """
+    wanted = [name for name in names if name]
+    if not wanted:
+        return []
+    live = {
+        row.engine_name
+        for row in frappe.get_all(
+            "HD AI Engine",
+            filters={"engine_name": ["in", wanted], "enabled": 1},
+            fields=["engine_name"],
+        )
+    }
+    kept, seen = [], set()
+    for name in wanted:
+        if name in live and name not in seen:
+            seen.add(name)
+            kept.append(name)
+    return kept
+
+
+def engine_chain(call: str | None = None) -> list:
+    """The engines to ask for one call, best first.
+
+    The rows pinned to the call win; failing that the wildcard rows are the
+    site's global order; failing that the chain is the single default engine
+    this whole table replaces, so a site with no rows behaves as it always did.
+    """
+    rows = _route_rows(frappe.get_single(RUNNER_SETTINGS))
+    pinned = [row["engine"] for row in rows if call and row["call"] == call]
+    if not pinned:
+        pinned = [row["engine"] for row in rows if row["call"] == EVERY_CALL]
+    chain = enabled_engines(pinned)
+    if chain:
+        return chain
+    return enabled_engines([default_engine()])
