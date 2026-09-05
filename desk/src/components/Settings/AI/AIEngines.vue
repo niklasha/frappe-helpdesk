@@ -358,6 +358,51 @@
             />
           </template>
         </template>
+        <!-- USD per million tokens, in raphain's shape, so a record's cost can
+             be worked out from the usage the runner reports. The cache rates
+             are optional: a provider without a cache simply has none. -->
+        <div class="flex flex-col gap-3 rounded border border-outline-gray-2 p-3">
+          <span class="text-base-medium text-ink-gray-7">
+            {{ __("Pris") }}
+          </span>
+          <div class="text-p-sm text-ink-gray-6">
+            {{ __("USD per miljon tokens. Lämna tomt om motorn saknar pris.") }}
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <FormControl
+              v-model="engine.pricing.input_per_million"
+              type="number"
+              step="any"
+              min="0"
+              :label="__('Pris in per miljon')"
+              :placeholder="__('2.50')"
+            />
+            <FormControl
+              v-model="engine.pricing.output_per_million"
+              type="number"
+              step="any"
+              min="0"
+              :label="__('Pris ut per miljon')"
+              :placeholder="__('10.00')"
+            />
+            <FormControl
+              v-model="engine.pricing.cache_read_per_million"
+              type="number"
+              step="any"
+              min="0"
+              :label="__('Cacheläsning per miljon')"
+              :placeholder="__('Valfritt')"
+            />
+            <FormControl
+              v-model="engine.pricing.cache_write_per_million"
+              type="number"
+              step="any"
+              min="0"
+              :label="__('Cacheskrivning per miljon')"
+              :placeholder="__('Valfritt')"
+            />
+          </div>
+        </div>
         <FormControl
           v-model="engine.enabled"
           type="checkbox"
@@ -403,6 +448,66 @@ const authTypeOptions = ["none", "api_key", "bearer", "oauth"];
 
 const KEYED_AUTH_TYPES = ["api_key", "bearer"];
 
+// The four rates raphain's Pricing knows, in the order the dialog shows them.
+const PRICING_KEYS = [
+  "input_per_million",
+  "output_per_million",
+  "cache_read_per_million",
+  "cache_write_per_million",
+];
+
+/** Blank boxes for every rate: "" is what an untouched number input holds. */
+const emptyPricing = () =>
+  Object.fromEntries(PRICING_KEYS.map((key) => [key, ""])) as Record<
+    string,
+    string | number
+  >;
+
+/**
+ * The rates a stored engine has, in the boxes' shape.
+ *
+ * The docfield is JSON, which the list endpoint hands back as text or, once
+ * parsed upstream, as an object; a rate that is missing or unreadable is a
+ * blank box rather than a broken dialog.
+ */
+function pricingFrom(value: unknown): Record<string, string | number> {
+  const boxes = emptyPricing();
+  let stored: any = value;
+  if (typeof stored === "string") {
+    try {
+      stored = stored.trim() ? JSON.parse(stored) : null;
+    } catch {
+      stored = null;
+    }
+  }
+  if (stored && typeof stored === "object") {
+    for (const key of PRICING_KEYS) {
+      const rate = stored[key];
+      if (rate !== null && rate !== undefined && rate !== "") boxes[key] = rate;
+    }
+  }
+  return boxes;
+}
+
+/**
+ * What the boxes say, as the pricing document the engine stores.
+ *
+ * A blank box means "no such rate", so its key is left out; with every box
+ * blank the engine has no price list at all and the stored one is cleared.
+ */
+function pricingFor(
+  boxes: Record<string, string | number>
+): Record<string, number> {
+  const pricing: Record<string, number> = {};
+  for (const key of PRICING_KEYS) {
+    const raw = boxes[key];
+    if (raw === "" || raw === null || raw === undefined) continue;
+    const rate = Number(raw);
+    if (Number.isFinite(rate)) pricing[key] = rate;
+  }
+  return pricing;
+}
+
 // The same three flags the server reads off the provider, in the same order it
 // reports them, so a page and a refusal never disagree about what is on offer.
 const MODE_FLAGS: Record<string, string> = {
@@ -428,6 +533,7 @@ const emptyEngine = () => ({
   auth_access_token: "",
   auth_refresh_token_env: "",
   auth_expires_at_unix: "",
+  pricing: emptyPricing(),
   enabled: true,
   is_default: false,
 });
@@ -466,6 +572,7 @@ const engines = createListResource({
     "auth_access_token_env",
     "auth_refresh_token_env",
     "auth_expires_at_unix",
+    "pricing",
     "is_default",
     "enabled",
   ],
@@ -564,6 +671,7 @@ function openDialog(row?: Record<string, any>) {
         auth_access_token: "",
         auth_refresh_token_env: row.auth_refresh_token_env || "",
         auth_expires_at_unix: row.auth_expires_at_unix || "",
+        pricing: pricingFrom(row.pricing),
         enabled: Boolean(row.enabled),
         is_default: Boolean(row.is_default),
       }
@@ -620,6 +728,9 @@ const saveEngine = createResource({
       model: values.model,
       base_url: providerBaseUrl.value ? "" : values.base_url,
       auth_type: values.auth_type,
+      // Sent as an object, never as text: the endpoint takes either, and an
+      // object is what the boxes already are. Empty clears a stored list.
+      pricing: pricingFor(values.pricing),
       enabled: values.enabled ? 1 : 0,
       is_default: values.is_default ? 1 : 0,
     };
