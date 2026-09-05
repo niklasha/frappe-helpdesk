@@ -14,7 +14,7 @@ import json
 
 import frappe
 from frappe import _
-from frappe.utils import strip_html
+from frappe.utils import cint, flt, strip_html
 
 from helpdesk.api import ai_engine, ai_runner, governance
 
@@ -300,13 +300,98 @@ def _unfenced(text: str | None) -> str:
     return (body[:end] if end != -1 else body).strip()
 
 
-def provenance(response: dict, prompt_version: int | str | None = None) -> dict:
+# What one generation used and what it cost, in the field names every AI
+# record keeps beside its provenance (Wave 17b). The counts are the runner's
+# `usage`; the cost is computed here from the engine's own price list, so a
+# price entered later can be re-run over the tokens that were kept.
+TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+)
+COST_FIELDS = ("engine", *TOKEN_FIELDS, "ai_cost", "cost_known")
+
+
+def cost_of(usage: dict | None, pricing: dict | None) -> float | None:
+    """Return what one generation cost in USD, or None when nothing can be said.
+
+    The arithmetic is raphain 0.3.2's `Pricing::cost_of` (session.rs): each
+    count times its price per million tokens. A cache read without a price
+    of its own is charged at a tenth of the input rate and a cache write at
+    the input rate, as raphain does. Reasoning tokens are already inside the
+    output count and are not added again.
+
+    No usage or no price list means the cost is unknown, which is what None
+    says here. The caller records that as `cost_known = 0` beside whatever
+    number the column ends up holding: Frappe cannot keep a Currency column
+    empty, so the flag, not the amount, is what tells "free" from "unpriced".
+    """
+    if not isinstance(usage, dict) or not usage:
+        return None
+    if not isinstance(pricing, dict) or not pricing:
+        return None
+    input_rate = flt(pricing.get("input_per_million"))
+    output_rate = flt(pricing.get("output_per_million"))
+    cache_write_rate = pricing.get("cache_write_per_million")
+    cache_read_rate = pricing.get("cache_read_per_million")
+    cache_write_rate = flt(cache_write_rate) if cache_write_rate is not None else input_rate
+    cache_read_rate = flt(cache_read_rate) if cache_read_rate is not None else input_rate * 0.1
+    return (
+        flt(usage.get("input_tokens")) * input_rate
+        + flt(usage.get("output_tokens")) * output_rate
+        + flt(usage.get("cache_write_tokens")) * cache_write_rate
+        + flt(usage.get("cache_read_tokens")) * cache_read_rate
+    ) / 1e6
+
+
+def _pricing(engine: str | None) -> dict | None:
+    """Return the engine's price list, or None when it has none."""
+    if not engine:
+        return None
+    stored = frappe.db.get_value("HD AI Engine", engine, "pricing")
+    pricing = ai_engine._stored_document(stored)
+    return pricing if isinstance(pricing, dict) else None
+
+
+def usage_fields(response: dict, engine: str | None = None) -> dict:
+    """Return the tokens one answer used, the engine that charged, and the cost.
+
+    `cost_known` is 1 only when the runner reported usage and the engine has
+    a price list; then `ai_cost` is the amount. Otherwise the cost is 0 with
+    `cost_known` 0, which the ticket's sum leaves out: a runner from before
+    accounting or an engine nobody has priced is not free, only unknown. A
+    count the runner did not send is 0 as well, since an Int column cannot
+    hold "nobody counted".
+    """
+    usage = response.get("usage")
+    if not isinstance(usage, dict):
+        usage = None
+    counts = {
+        field: (cint(usage.get(field)) if usage else 0) for field in TOKEN_FIELDS
+    }
+    cost = cost_of(usage, _pricing(engine))
+    return {
+        "engine": engine,
+        **counts,
+        "ai_cost": flt(cost),
+        "cost_known": 1 if cost is not None else 0,
+    }
+
+
+def provenance(
+    response: dict, prompt_version: int | str | None = None, engine: str | None = None
+) -> dict:
     """Return what produced one result, in the field names the records use.
 
     An answer whose origin the runner did not state cannot be recorded: a
     result nobody can trace back to a model is indistinguishable from one a
     colleague wrote, which is the one thing the audit trail exists to tell
     apart. The refusal comes before the record, so nothing is left behind.
+
+    With the engine named, the answer's token counts, their cost and whether
+    that cost is known travel with the provenance (Wave 17b); a caller that
+    names no engine records the tokens with `cost_known` 0.
     """
     if not response.get("model"):
         frappe.throw(_("The AI engine did not identify itself."))
@@ -314,6 +399,7 @@ def provenance(response: dict, prompt_version: int | str | None = None) -> dict:
         "provider": response.get("provider"),
         "model_version": response.get("model"),
         "prompt_version": prompt_version,
+        **usage_fields(response, engine),
     }
 
 

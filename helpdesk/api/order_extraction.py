@@ -77,7 +77,7 @@ def extract_order(ticket_id: str, idempotency_key: str | None = None) -> dict:
         EXTRACTION_FIELDS,
     )
     details = {field: answer[field] for field in EXTRACTION_FIELDS if field in answer}
-    generation = ai_generation.provenance(response, prompt_version)
+    generation = ai_generation.provenance(response, prompt_version, engine)
     result = record_extraction(
         ticket_id=ticket_id,
         idempotency_key=idempotency_key,
