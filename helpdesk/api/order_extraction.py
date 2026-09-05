@@ -70,6 +70,16 @@ def record_extraction(
     values.pop("ready_for_connector", None)
     if isinstance(required, str):
         required = json.loads(required) if required.startswith("[") else [x.strip() for x in required.split(",") if x.strip()]
+    # The model answers in JSON and is free to say original_files: ["a.pdf",
+    # "b.ai"] or colors: ["marinblå", "vit"]; the columns are text. Frappe
+    # refuses a list at insert ("Value for Original Files cannot be a list"),
+    # which on the demo cost every automatic extraction whose mail named two
+    # files. Lists become a comma-separated line, dicts their JSON.
+    for field, value in list(values.items()):
+        if isinstance(value, (list, tuple)):
+            values[field] = ", ".join(str(item) for item in value if item not in (None, ""))
+        elif isinstance(value, dict):
+            values[field] = json.dumps(value, ensure_ascii=False)
     missing = [field for field in required if not values.get(field)]
     complete = not missing
     doc = frappe.get_doc({"doctype": "HD Order Extraction", "ticket": ticket_id, "idempotency_key": idempotency_key, "required_fields": json.dumps(required), "missing_fields": json.dumps(missing), "complete": complete, "status": "Ready to create order" if complete else "Needs Review", "ready_for_connector": complete, "corrections": {}, "corrected_on": None, **values})

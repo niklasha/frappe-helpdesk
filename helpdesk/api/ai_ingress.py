@@ -479,7 +479,8 @@ def _ingress(ticket_id: str) -> dict:
         done["triaged"] = True
     except Exception:
         frappe.log_error(
-            title="Helpdesk AI ingress", message=f"triage failed for {ticket_id}"
+            title="Helpdesk AI ingress",
+            message=f"triage failed for {ticket_id}\n\n{frappe.get_traceback()}",
         )
         return done
 
