@@ -113,6 +113,21 @@ def _validate_message(message, ticket_id):
         )
 
 
+def _validate_adopted_from(adopted_from, ticket_id):
+    """Refuse to wear a translation that belongs to another ticket, or to none."""
+    if not adopted_from:
+        return
+    owner = frappe.db.get_value("HD Message Translation", adopted_from, "ticket")
+    if not owner:
+        frappe.throw(_("Translation {0} was not found.").format(adopted_from))
+    if owner != ticket_id:
+        frappe.throw(
+            _("Translation {0} does not belong to ticket {1}.").format(
+                adopted_from, ticket_id
+            )
+        )
+
+
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def record_translation(
@@ -127,6 +142,7 @@ def record_translation(
     model_version: str | None = None,
     prompt_version: str | int | None = None,
     idempotency_key: str | None = None,
+    adopted_from: str | None = None,
 ) -> dict:
     """Persist a translation next to its original text, replayable by key.
 
@@ -136,9 +152,17 @@ def record_translation(
     manage nothing better than a strip. It stays optional: every translation
     recorded before Wave 13 has no message to name, and a guess would say
     something false about what a customer wrote.
+
+    `adopted_from` names the row whose translation these words wear. When an
+    email opens a ticket its text is translated once, for the ticket, and the
+    opening message shows the same words through a row of its own that says so
+    — a row that bought nothing, and whose provenance is the row it names. It
+    keeps the two facts apart that one row used to carry: which translation
+    was paid for, and which message reads through it.
     """
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     _validate_message(message, ticket_id)
+    _validate_adopted_from(adopted_from, ticket_id)
     source_language = source_language or detect_language_code(original_text)
     _validate_supported_language(source_language)
     _validate_supported_language(target_language)
@@ -162,6 +186,7 @@ def record_translation(
             "model_version": model_version,
             "prompt_version": prompt_version,
             "idempotency_key": idempotency_key,
+            "adopted_from": adopted_from,
         }
     )
     doc.insert(ignore_permissions=True)
@@ -489,6 +514,9 @@ TRANSLATION_VIEW_FIELDS = (
     "provider",
     "model_version",
     "prompt_version",
+    # Whose translation this row wears, when it bought none of its own. The
+    # band uses it to stay silent about words the thread already shows.
+    "adopted_from",
 )
 
 
