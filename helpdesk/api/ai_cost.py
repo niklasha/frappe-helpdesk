@@ -32,13 +32,15 @@ def total_for(ticket_id: str) -> float:
     """Sum of `ai_cost` over the ticket's AI rows whose cost is known."""
     total = 0.0
     for doctype in AI_DOCTYPES:
+        # Summed here rather than in SQL: this bench's Frappe refuses function
+        # strings in SELECT ("SQL functions are not allowed as strings"), and
+        # a ticket has a handful of AI rows, not thousands.
         rows = frappe.db.get_all(
             doctype,
             filters={"ticket": ticket_id, "cost_known": 1},
-            fields=["sum(ai_cost) as total"],
+            fields=["ai_cost"],
         )
-        if rows:
-            total += flt(rows[0].get("total"))
+        total += sum(flt(row.get("ai_cost")) for row in rows)
     return total
 
 
