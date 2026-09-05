@@ -428,6 +428,12 @@ def _ingress(ticket_id: str) -> dict:
     Each step is attempted on its own: a translation that fails is not a reason
     to skip the triage, and neither is a reason to leave a mark on the ticket.
     """
+    # Fresh snapshot. The worker that waited for the ticket's lock opened its
+    # transaction before the previous holder committed, and under REPEATABLE
+    # READ it would not see that holder's rows: the replay check misses, the
+    # insert collides on the idempotency key (seen on the demo as "Duplicate
+    # entry 'ingress-triage-0034'"). Nothing of ours is pending here.
+    frappe.db.commit()
     done = {"ticket": ticket_id, "translated": False, "triaged": False}
     if not ai_runner.is_runner_available():
         return done
