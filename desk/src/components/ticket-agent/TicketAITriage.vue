@@ -1,3 +1,13 @@
+
+// The endpoint carries the message date (source_message_on) beside the
+// message name, so no second call is needed to say when the reply came.
+const assessedAfter = computed(() => {
+  const t = triage.data;
+  if (!t?.source_message) return "";
+  return t.source_message_on
+    ? dayjs(t.source_message_on).format("YYYY-MM-DD HH:mm")
+    : t.source_message;
+});
 <template>
   <!-- ticket_triage now always answers with a dict (AIAN-16); only one that
        carries a record name is a proposal worth a panel. -->
@@ -61,6 +71,12 @@
       </div>
     </dl>
 
+    <!-- AIAN-17: a verdict made after a customer reply says so, so a second
+         reading is not presented as if it were the first. -->
+    <p v-if="assessedAfter" class="text-xs text-ink-gray-5">
+      {{ __("Bedömd efter meddelande {0}", [assessedAfter]) }}
+    </p>
+
     <!-- Provenance last and quiet: an auditor needs it, an agent working a
          ticket does not read it every time. -->
     <p v-if="triage.data.model_version" class="text-xs text-ink-gray-4">
@@ -72,7 +88,7 @@
 
 <script setup lang="ts">
 import { __ } from "@/translation";
-import { Badge, createResource } from "frappe-ui";
+import { Badge, createResource, dayjs } from "frappe-ui";
 import { TicketSymbol } from "@/types";
 import { computed, inject, watch } from "vue";
 import SparklesIcon from "~icons/lucide/sparkles";

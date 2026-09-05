@@ -1,3 +1,12 @@
+
+// source_message_on rides on the same response as the proposal.
+const assessedAfter = computed(() => {
+  const p = proposal.value;
+  if (!p?.source_message) return "";
+  return p.source_message_on
+    ? dayjs(p.source_message_on).format("YYYY-MM-DD HH:mm")
+    : p.source_message;
+});
 <template>
   <!-- S-2026-09-04 area 3: the classification lives on the header line, not
        only in the sidebar. One row: what the ticket is, what the AI proposes,
@@ -62,6 +71,11 @@
     <p v-if="nextStep" class="basis-full text-xs text-ink-gray-6">
       {{ __("Behöver") }}: {{ nextStep }}
     </p>
+
+    <!-- AIAN-17: the proposal followed a customer reply; say which one. -->
+    <p v-if="assessedAfter" class="basis-full text-xs text-ink-gray-5">
+      {{ __("Bedömd efter meddelande {0}", [assessedAfter]) }}
+    </p>
   </div>
 
   <Dialog v-model:open="showEditor" :title="__('Redigera klassificering')">
@@ -105,6 +119,7 @@ import {
   call,
   createListResource,
   createResource,
+  dayjs,
   toast,
 } from "frappe-ui";
 import { computed, inject, ref, watch } from "vue";
