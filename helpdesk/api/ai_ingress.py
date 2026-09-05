@@ -118,6 +118,28 @@ def enqueue_for_message(doc, method=None) -> None:
             message=f"could not queue translation for {doc.name}\n\n{frappe.get_traceback()}",
         )
 
+    # Wave 17 (AIAN-17): a customer reply is read against the verdict already
+    # standing. Only when one stands: the opening mail's own Communication
+    # arrives right behind the ticket, before the ticket job has run, and the
+    # ticket job covers that text. Queueing a second triage for it would buy the
+    # same reading twice and record it twice.
+    if not frappe.db.exists("HD AI Triage Result", {"ticket": doc.reference_name}):
+        return
+    try:
+        frappe.enqueue(
+            "helpdesk.api.ai_ingress.retriage_for_message",
+            queue="short",
+            job_id=f"{JOB_PREFIX}-retriage-{doc.name}",
+            deduplicate=True,
+            message=doc.name,
+            enqueue_after_commit=True,
+        )
+    except Exception:
+        frappe.log_error(
+            title="Helpdesk AI ingress",
+            message=f"could not queue re-triage for {doc.name}\n\n{frappe.get_traceback()}",
+        )
+
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
@@ -183,6 +205,59 @@ def translate_message(message: str) -> dict:
         frappe.log_error(
             title="Helpdesk AI ingress",
             message=f"translation failed for message {message}\n\n{frappe.get_traceback()}",
+        )
+    return done
+
+
+def retriage_for_message(message: str) -> dict:
+    """Read one customer reply against the ticket's standing verdict. Worker only.
+
+    The demo finding: a quote request arrived without a quantity, the model said
+    so, the customer answered with the number, and the panel went on saying the
+    quantity was missing. The chain ran once, keyed on the ticket. This is the
+    second run: the earlier verdict, the ticket text and the reply are put in
+    front of the model together, and the answer is a new row beside the old one
+    — never over it, because what the model proposed and when is audit.
+
+    Keyed on the message, so a retry replays rather than pays, and one reply is
+    one re-triage however many times the job is queued.
+    """
+    done = {"message": message, "triaged": False, "reason": None}
+    row = frappe.db.get_value(
+        "Communication",
+        message,
+        ["reference_doctype", "reference_name", "sent_or_received"],
+        as_dict=True,
+    )
+    if not row or row.reference_doctype != "HD Ticket" or not row.reference_name:
+        done["reason"] = "not a ticket message"
+        return done
+    if row.sent_or_received != "Received":
+        done["reason"] = "not from the customer"
+        return done
+    if not ai_runner.is_runner_available():
+        done["reason"] = "no runner"
+        return done
+    previous = ai_triage.latest_triage(row.reference_name)
+    if not previous:
+        # Checked again here: the enqueue hook looked, but the ticket job may
+        # have failed since, and a re-triage with nothing to re-read is the
+        # first triage under the wrong key.
+        done["reason"] = "the ticket has no triage to revisit"
+        return done
+    try:
+        ai_triage.triage_ticket(
+            ticket_id=row.reference_name,
+            idempotency_key=f"ingress-retriage-{message}",
+            source_message=message,
+            previous=previous,
+        )
+        done["triaged"] = True
+    except Exception:
+        done["reason"] = "the provider did not answer"
+        frappe.log_error(
+            title="Helpdesk AI ingress",
+            message=f"re-triage failed for message {message}\n\n{frappe.get_traceback()}",
         )
     return done
 

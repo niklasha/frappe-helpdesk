@@ -61,6 +61,12 @@
       </div>
     </dl>
 
+    <!-- AIAN-17: a verdict made after a customer reply says so, so a second
+         reading is not presented as if it were the first. -->
+    <p v-if="assessedAfter" class="text-xs text-ink-gray-5">
+      {{ __("Bedömd efter meddelande {0}", [assessedAfter]) }}
+    </p>
+
     <!-- Provenance last and quiet: an auditor needs it, an agent working a
          ticket does not read it every time. -->
     <p v-if="triage.data.model_version" class="text-xs text-ink-gray-4">
@@ -72,7 +78,7 @@
 
 <script setup lang="ts">
 import { __ } from "@/translation";
-import { Badge, createResource } from "frappe-ui";
+import { Badge, createResource, dayjs } from "frappe-ui";
 import { TicketSymbol } from "@/types";
 import { computed, inject, watch } from "vue";
 import SparklesIcon from "~icons/lucide/sparkles";
@@ -107,4 +113,12 @@ const corrected = computed(() => Boolean(triage.data?.corrected_classification))
 const confidencePercent = computed(() =>
   Math.round((Number(triage.data?.confidence) || 0) * 100)
 );
+
+// AIAN-17: a re-triage names the Communication it read, and the endpoint sends
+// that message's date beside it (source_message_on). A W2 row keeps free text
+// in source_message, so only a resolved date makes a line worth showing.
+const assessedAfter = computed(() => {
+  const on = triage.data?.source_message_on;
+  return on ? dayjs(on).format("YYYY-MM-DD HH:mm") : "";
+});
 </script>

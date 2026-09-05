@@ -62,6 +62,11 @@
     <p v-if="nextStep" class="basis-full text-xs text-ink-gray-6">
       {{ __("Behöver") }}: {{ nextStep }}
     </p>
+
+    <!-- AIAN-17: the proposal followed a customer reply; say which one. -->
+    <p v-if="assessedAfter" class="basis-full text-xs text-ink-gray-5">
+      {{ __("Bedömd efter meddelande {0}", [assessedAfter]) }}
+    </p>
   </div>
 
   <Dialog v-model:open="showEditor" :title="__('Redigera klassificering')">
@@ -105,6 +110,7 @@ import {
   call,
   createListResource,
   createResource,
+  dayjs,
   toast,
 } from "frappe-ui";
 import { computed, inject, ref, watch } from "vue";
@@ -132,6 +138,14 @@ watch(
 
 // ticket_triage always answers with a dict; {next_step} alone means no triage.
 const proposal = computed(() => (triage.data?.name ? triage.data : null));
+
+// AIAN-17: source_message_on rides on the same response as the proposal; it is
+// only set when source_message names a Communication (a re-triage), never for
+// the free text a first-pass row stores there.
+const assessedAfter = computed(() => {
+  const on = proposal.value?.source_message_on;
+  return on ? dayjs(on).format("YYYY-MM-DD HH:mm") : "";
+});
 
 // next_step rides on the same response; null means the endpoint predates it.
 const nextStep = computed(() => triage.data?.next_step || "");

@@ -2,7 +2,7 @@ import json
 
 import frappe
 from frappe import _
-from frappe.utils import flt, now_datetime
+from frappe.utils import flt, now_datetime, strip_html
 
 from helpdesk.api import ai_generation, governance
 from helpdesk.helpdesk.doctype.hd_ticket_type.hd_ticket_type import (
@@ -199,6 +199,59 @@ def record_triage(
     doc.insert(ignore_permissions=True)
     return doc.as_dict()
 
+# What of an earlier verdict the model is shown when it reads a reply. The
+# fields an agent acts on and the one the customer may have answered; not the
+# confidence or the rationale, which would invite the model to echo itself.
+PREVIOUS_FIELDS = ("classification", "priority", "missing_information", "summary")
+
+RETRIAGE_INSTRUCTION = (
+    "A verdict on this ticket already stands, given below. The customer has since "
+    "written again. Read the new message against that verdict: it may supply what "
+    "was missing, change what the ticket is about, or change nothing. Answer for "
+    "the ticket as it stands now, not for the new message on its own, and name as "
+    "missing only what is still missing after it."
+)
+
+
+def latest_triage(ticket_id: str) -> str | None:
+    """The newest proposal on a ticket, or nothing — the one the panel shows."""
+    rows = frappe.get_all(
+        "HD AI Triage Result",
+        filters={"ticket": ticket_id},
+        pluck="name",
+        order_by="creation desc",
+        limit_page_length=1,
+    )
+    return rows[0] if rows else None
+
+
+def _retriage_text(ticket_id: str, previous: str, source_message: str) -> str:
+    """What the model reads when a customer reply revisits a verdict.
+
+    Three things in order: the verdict as it stands, the ticket as it was
+    opened, the reply. The reply alone would be a triage of a different ticket
+    — "we approve the quote for 40 vests" is an approval with a number in it,
+    and only beside "quote request, quantity missing" is it the answer to the
+    question the model asked.
+    """
+    earlier = frappe.db.get_value(
+        "HD AI Triage Result", previous, list(PREVIOUS_FIELDS), as_dict=True
+    ) or {}
+    verdict = "\n".join(
+        f"{field}: {earlier.get(field)}" for field in PREVIOUS_FIELDS if earlier.get(field)
+    )
+    reply = strip_html(
+        frappe.db.get_value("Communication", source_message, "content") or ""
+    ).strip()
+    return "\n\n".join(
+        [
+            RETRIAGE_INSTRUCTION,
+            "Earlier verdict:\n" + (verdict or "(none recorded)"),
+            "Ticket:\n" + ai_generation.ticket_text(ticket_id),
+            "New message from the customer:\n" + (reply or "(empty)"),
+        ]
+    )
+
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
@@ -206,7 +259,10 @@ def triage_ticket(
     ticket_id: str,
     idempotency_key: str | None = None,
     confidence_threshold: float | int | None = None,
+    source_message: str | None = None,
+    previous: str | None = None,
 ) -> dict:
+
     """Have the AI engine triage one ticket, and record its proposal for review.
 
     Only the fields the triage record knows are taken from the answer, and
@@ -216,6 +272,11 @@ def triage_ticket(
     How sure the model claims to be decides nothing on its own. The proposal is
     measured against a threshold here exactly as a hand-recorded one is, so a
     hesitant answer reaches an agent instead of standing as a settled triage.
+
+    With `source_message` (AIAN-17) this is a re-reading: the customer wrote
+    again, and the model is shown the verdict named by `previous` — the latest
+    one when not named — beside the ticket and the reply. The answer is a new
+    row that records which message caused it; the earlier row is never touched.
     """
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     stored = ai_generation.replayed("HD AI Triage Result", idempotency_key)
@@ -223,10 +284,19 @@ def triage_ticket(
         return frappe.get_doc("HD AI Triage Result", stored).as_dict()
     engine = ai_generation.engine_or_throw()
     instructions, prompt_version = ai_generation._prompt(ai_generation.TICKET_TRIAGE)
+    if source_message:
+        previous = previous or latest_triage(ticket_id)
+        content = (
+            _retriage_text(ticket_id, previous, source_message)
+            if previous
+            else ai_generation.ticket_text(ticket_id)
+        )
+    else:
+        content = ai_generation.ticket_text(ticket_id)
     answer, response = ai_generation.generate_json(
         engine,
         instructions,
-        ai_generation.ticket_text(ticket_id),
+        content,
         _schema_with_catalogue(),
         TRIAGE_FIELDS,
     )
@@ -240,6 +310,7 @@ def triage_ticket(
         ticket_id=ticket_id,
         idempotency_key=idempotency_key,
         confidence_threshold=confidence_threshold,
+        source_message=source_message,
         **generation,
         **proposal,
     )
@@ -418,6 +489,7 @@ TRIAGE_VIEW_FIELDS = (
     "model_version",
     "prompt_version",
     "audit_timestamp",
+    "source_message",
 )
 
 
@@ -460,6 +532,11 @@ def ticket_triage(ticket_id: str) -> dict:
     The newest wins. A ticket can accumulate proposals — an agent re-running the
     chain, a correction recorded beside the original — and the one an agent is
     working against is the last one made.
+
+    Since Wave 17 a customer reply makes a new proposal too. The answer then
+    also says which row it supersedes and when the message it read was sent
+    (`source_message_on`), so the panel can say "bedömd efter meddelande …"
+    without a second call.
     """
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     rows = frappe.get_all(
@@ -467,7 +544,7 @@ def ticket_triage(ticket_id: str) -> dict:
         filters={"ticket": ticket_id},
         fields=list(TRIAGE_VIEW_FIELDS),
         order_by="creation desc",
-        limit_page_length=1,
+        limit_page_length=2,
     )
     triage = rows[0] if rows else None
     ticket = frappe.db.get_value(
@@ -477,5 +554,18 @@ def ticket_triage(ticket_id: str) -> dict:
         as_dict=True,
     ) or {}
     answer = dict(triage) if triage else {}
+    if triage:
+        answer["supersedes"] = rows[1].name if len(rows) > 1 else None
+        # source_message is Long Text: a re-triage stores the Communication name,
+        # a first pass (W2) stores the message text itself. Only the former
+        # resolves to a date; for the latter get_value finds nothing and the
+        # panel simply has no "bedömd efter" line.
+        answer["source_message_on"] = (
+            frappe.db.get_value(
+                "Communication", triage.source_message, "communication_date"
+            )
+            if triage.source_message
+            else None
+        )
     answer["next_step"] = next_step(ticket, triage)
     return answer
