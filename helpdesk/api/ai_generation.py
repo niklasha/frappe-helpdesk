@@ -306,11 +306,16 @@ def customer_context(ticket_id: str) -> str:
     customer = frappe.db.get_value("HD Ticket", ticket_id, "customer")
     if not customer:
         return ""
-    profile = frappe.db.get_value(
-        "HD Customer", customer, list(CUSTOMER_PROFILE_FIELDS), as_dict=True
-    )
+    meta = frappe.get_meta("HD Customer")
+    fields = [f for f in CUSTOMER_PROFILE_FIELDS if meta.has_field(f)]
+    if not fields:
+        return ""
+    profile = frappe.db.get_value("HD Customer", customer, fields, as_dict=True)
     if not profile:
         return ""
+    for field in CUSTOMER_PROFILE_FIELDS:
+        # A column the profile migration has not created yet reads as empty.
+        profile.setdefault(field, None)
     yes_no = lambda value: "ja" if cint(value) else "nej"  # noqa: E731
     lines = [
         "Kundprofil:",

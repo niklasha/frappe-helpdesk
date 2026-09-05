@@ -80,6 +80,11 @@ def record_extraction(
             values[field] = ", ".join(str(item) for item in value if item not in (None, ""))
         elif isinstance(value, dict):
             values[field] = json.dumps(value, ensure_ascii=False)
+    ticket_customer = frappe.db.get_value("HD Ticket", ticket_id, "customer")
+    if not values.get("customer") and ticket_customer:
+        # The ticket already resolved who is writing; a key account that
+        # never signs its mail must not be listed as a missing customer.
+        values["customer"] = ticket_customer
     corrections = {}
     if not values.get("product"):
         # A key account never writes its product (Wave 19, CUST-02): the
@@ -99,7 +104,7 @@ def record_extraction(
 def _default_product(ticket_id: str) -> str | None:
     """The resolved customer's default product, or nothing."""
     customer = frappe.db.get_value("HD Ticket", ticket_id, "customer")
-    if not customer:
+    if not customer or not frappe.get_meta("HD Customer").has_field("default_product"):
         return None
     return frappe.db.get_value("HD Customer", customer, "default_product") or None
 
