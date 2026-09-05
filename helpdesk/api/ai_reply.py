@@ -372,33 +372,13 @@ def draft_completion_request(
     return record_reply_draft(
         ticket_id=extraction.ticket,
         body=_("To continue with your order we still need: {0}").format(
-            ", ".join(_field_labels(missing))
+            ", ".join(missing)
         ),
         question_type="completion_request",
         sources=[],
         confidence=1,
         idempotency_key=idempotency_key,
     )
-
-
-# What the customer is asked for, in the words the customer uses. The stored
-# field names are the extraction's schema; the reply must not leak "size" or
-# "quantity" as if they were words in a Swedish letter.
-FIELD_LABELS = {
-    "customer": "kund",
-    "product": "produkt",
-    "quantity": "antal",
-    "size": "storlek",
-    "colors": "färg",
-    "production_option": "produktionsalternativ",
-    "delivery_information": "leveransuppgifter",
-    "original_files": "originalfiler",
-}
-
-
-def _field_labels(missing: list) -> list:
-    """Name the missing fields the way the customer would."""
-    return [FIELD_LABELS.get(field, field) for field in missing]
 
 
 def _newest_extraction(ticket_id: str):
@@ -419,34 +399,23 @@ def _missing_of(extraction) -> list:
     return missing or []
 
 
-def _completion_suggestion(extraction) -> dict:
-    """Draft the request for what the order lacks, generated when an engine can."""
-    if ai_runner.is_runner_available() and ai_engine.default_engine():
-        try:
-            return generate_completion_request(extraction.name)
-        except Exception:
-            # The fixed wording is the honest fallback when the engine fails;
-            # the failure itself is logged for the administrator.
-            frappe.log_error(
-                title="AI suggestion: completion request generation failed"
-            )
-    return draft_completion_request(extraction.name)
-
-
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def suggest_reply(ticket_id: str) -> dict:
     """Draft the one reply this ticket needs and hand it to the editor.
 
-    An order that still lacks details gets a completion request naming only
-    those details; any other ticket gets a reply grounded in the approved
-    knowledge library when the library has one. Nothing is sent: the result
-    is a draft the agent edits before sending, or a reason why there is none.
+    An order that still lacks details gets the fixed-wording completion
+    request naming only those details, never the engine-generated variant:
+    the released wording is what the auto-reply policy already covers, and
+    an administrator who released it released text they have read. Any other
+    ticket gets a reply grounded in the approved knowledge library when the
+    library has one. Nothing is sent: the result is a draft the agent edits
+    before sending, or a reason why there is none.
     """
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     extraction = _newest_extraction(ticket_id)
     if extraction and _missing_of(extraction):
-        return _completion_suggestion(extraction)
+        return draft_completion_request(extraction.name)
 
     question = ai_generation.ticket_text(ticket_id)
     if question and search_knowledge(question, limit=1):
