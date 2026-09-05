@@ -269,7 +269,10 @@ def _retriage_text(ticket_id: str, previous: str, source_message: str) -> str:
         [
             RETRIAGE_INSTRUCTION,
             "Earlier verdict:\n" + (verdict or "(none recorded)"),
-            "Ticket:\n" + ai_generation.ticket_text(ticket_id),
+            "Ticket:\n"
+            + ai_generation.with_customer_context(
+                ticket_id, ai_generation.ticket_text(ticket_id)
+            ),
             "New message from the customer:\n" + (reply or "(empty)"),
         ]
     )
@@ -311,10 +314,16 @@ def triage_ticket(
         content = (
             _retriage_text(ticket_id, previous, source_message)
             if previous
-            else ai_generation.ticket_text(ticket_id)
+            else ai_generation.with_customer_context(
+                ticket_id, ai_generation.ticket_text(ticket_id)
+            )
         )
     else:
-        content = ai_generation.ticket_text(ticket_id)
+        # The resolved customer's profile travels with the ticket (Wave 19,
+        # CUST-02): who is writing is data the model reads, not a name list.
+        content = ai_generation.with_customer_context(
+            ticket_id, ai_generation.ticket_text(ticket_id)
+        )
     answer, response = ai_generation.generate_json(
         engine,
         instructions,
