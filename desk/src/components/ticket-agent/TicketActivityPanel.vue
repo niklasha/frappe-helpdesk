@@ -7,6 +7,7 @@
   >
     <template #tab-panel="{ tab }">
       <TicketAnalyticsTab v-if="tab.name === 'analytics'" />
+      <TicketCustomerTab v-else-if="tab.name === 'customer'" />
       <TicketAgentActivities
         v-else-if="Boolean(activities.data)"
         ref="ticketAgentActivitiesRef"
@@ -57,8 +58,11 @@ import {
   PhoneIcon,
 } from "@/components/icons";
 import TicketAnalyticsTab from "@/components/ticket-agent/analytics/TicketAnalyticsTab.vue";
+import TicketCustomerTab from "@/components/ticket-agent/TicketCustomerTab.vue";
 import LucideChartNoAxesColumn from "~icons/lucide/chart-no-axes-column";
+import LucideBuilding from "~icons/lucide/building-2";
 import { useActiveTabManager } from "@/composables/useActiveTabManager";
+import { __ } from "@/translation";
 import { useTelephonyStore } from "@/stores/telephony";
 import { ActivitiesSymbol, TabObject, TicketSymbol, TicketTab } from "@/types";
 import { Button, Tabs } from "frappe-ui";
@@ -108,6 +112,12 @@ const tabs: ComputedRef<TabObject[]> = computed(() => {
     name: "analytics",
     label: "Analytics",
     icon: LucideChartNoAxesColumn,
+  });
+  // S/7: the customer profile the AI reads, beside the activity tabs.
+  _tabs.push({
+    name: "customer",
+    label: __("Kund"),
+    icon: LucideBuilding,
   });
   return _tabs;
 });
