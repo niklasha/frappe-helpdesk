@@ -1,7 +1,7 @@
 import json
 
 import frappe
-from frappe.utils import now_datetime
+from frappe.utils import now_datetime, strip_html
 
 from helpdesk.api import ai_generation
 from helpdesk.utils import agent_only
@@ -20,6 +20,34 @@ EXTRACTION_FIELDS = (
     "production_option",
     "delivery_information",
     "original_files",
+)
+
+# What the order card reads off an extraction. Named rather than as_dict so the
+# card is not handed provenance and token counts it has no column for, and so
+# a field the doctype gains later (approved_by, approved_on) is asked for by
+# name and comes back empty until it exists.
+PANEL_FIELDS = (
+    "name",
+    "ticket",
+    "product",
+    "quantity",
+    "size",
+    "colors",
+    "production_option",
+    "delivery_information",
+    "customer",
+    "missing_fields",
+    "required_fields",
+    "complete",
+    "status",
+    "ready_for_connector",
+    "approved_by",
+    "approved_on",
+    "corrections",
+    "source_message",
+    "ai_cost",
+    "cost_known",
+    "creation",
 )
 
 
@@ -50,7 +78,11 @@ def record_extraction(
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def extract_order(ticket_id: str, idempotency_key: str | None = None) -> dict:
+def extract_order(
+    ticket_id: str,
+    idempotency_key: str | None = None,
+    source_message: str | None = None,
+) -> dict:
     """Read one ticket's order details with the AI engine, and record them.
 
     Only the details the customer stated are taken from the answer. Whether
@@ -60,6 +92,11 @@ def extract_order(ticket_id: str, idempotency_key: str | None = None) -> dict:
 
     A key that already produced an extraction returns it unchanged, without
     asking the engine a question it has answered once already.
+
+    `source_message` is the customer reply that caused a re-read (Wave 18):
+    its words are put in front of the engine after the ticket's, and its name
+    is recorded on the row, so the card can say which mail the details came
+    from. The earlier row stays — what the model read and when is audit.
     """
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     stored = ai_generation.replayed("HD Order Extraction", idempotency_key)
@@ -72,7 +109,7 @@ def extract_order(ticket_id: str, idempotency_key: str | None = None) -> dict:
     answer, response = ai_generation.generate_json(
         engine,
         instructions,
-        ai_generation.ticket_text(ticket_id),
+        _extraction_text(ticket_id, source_message),
         EXTRACTION_SCHEMA,
         EXTRACTION_FIELDS,
     )
@@ -81,6 +118,7 @@ def extract_order(ticket_id: str, idempotency_key: str | None = None) -> dict:
     result = record_extraction(
         ticket_id=ticket_id,
         idempotency_key=idempotency_key,
+        source_message=source_message,
         **generation,
         **details,
     )
@@ -88,6 +126,63 @@ def extract_order(ticket_id: str, idempotency_key: str | None = None) -> dict:
         "extracted an order", "HD Order Extraction", result["name"], generation
     )
     return result
+
+
+def _extraction_text(ticket_id: str, source_message: str | None) -> str:
+    """The ticket as opened, then the reply that revisits it — in that order.
+
+    The reply alone would be an extraction of a different ticket: "make it 60"
+    names no product, and only under the opening mail is it forty vests
+    becoming sixty.
+    """
+    text = ai_generation.ticket_text(ticket_id)
+    if not source_message:
+        return text
+    content = frappe.db.get_value("Communication", source_message, "content")
+    reply = strip_html(content or "").strip()
+    return f"{text}\n\nKundens svar:\n{reply}" if reply else text
+
+
+@frappe.whitelist()
+@agent_only
+def ticket_extraction(ticket_id: str) -> dict | None:
+    """The newest extraction on a ticket, for the order card — or nothing.
+
+    Nothing, and not an error, for a ticket that is not an order: the card
+    asks the same way for every ticket, and an invoice question has no order
+    details to show. Newest by creation, because a customer reply re-reads
+    the thread into a new row beside the old one (see `extract_order`), and
+    the card shows what the conversation says now.
+    """
+    frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+    meta = frappe.get_meta("HD Order Extraction")
+    fields = [field for field in PANEL_FIELDS if field == "name" or meta.has_field(field)]
+    rows = frappe.get_all(
+        "HD Order Extraction",
+        filters={"ticket": ticket_id},
+        fields=fields,
+        order_by="creation desc",
+        limit_page_length=1,
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    for field in ("missing_fields", "required_fields"):
+        row[field] = _as_list(row.get(field))
+    return row
+
+
+def _as_list(value) -> list:
+    """The JSON list a Small Text field holds, or a list of nothing."""
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return [part.strip() for part in str(value).split(",") if part.strip()]
+    return parsed if isinstance(parsed, list) else []
 
 
 @frappe.whitelist(methods=["POST"])

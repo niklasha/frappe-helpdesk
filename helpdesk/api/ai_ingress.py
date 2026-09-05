@@ -30,7 +30,8 @@ up first does the work once, and the other finds it done.
 import frappe
 from frappe.utils import strip_html
 
-from helpdesk.api import ai_runner, ai_triage, translation
+from helpdesk.api import ai_runner, ai_triage, order_extraction, translation
+from helpdesk.helpdesk.doctype.hd_ticket_type.hd_ticket_type import classification_group
 from helpdesk.utils import agent_only, is_admin
 
 SETTING = "ai_triage_incoming"
@@ -346,6 +347,15 @@ def retriage_for_message(message: str) -> dict:
             title="Helpdesk AI ingress",
             message=f"re-triage failed for message {message}\n\n{frappe.get_traceback()}",
         )
+        return done
+    # Wave 18 (ORDR-05): the card follows the conversation the way the verdict
+    # does. Keyed on the message, so the reply that changed the quantity gets a
+    # row of its own beside the opening mail's, and a re-run replays it.
+    done["extracted"] = _extract_if_order(
+        row.reference_name,
+        idempotency_key=f"ingress-extract-{row.reference_name}-{message}",
+        source_message=message,
+    )
     return done
 
 
@@ -471,7 +481,64 @@ def _ingress(ticket_id: str) -> dict:
         frappe.log_error(
             title="Helpdesk AI ingress", message=f"triage failed for {ticket_id}"
         )
+        return done
+
+    # Wave 18 (ORDR-05): the triage said Order; that is the signal to read the
+    # order details too, so the card in the sidebar has something to show
+    # without anyone clicking. Keyed on the ticket like the triage, and only
+    # ever an extraction — no submission, no order, until a person says so.
+    done["extracted"] = _extract_if_order(
+        ticket_id, idempotency_key=f"ingress-extract-{ticket_id}"
+    )
     return done
+
+
+def _is_order(ticket_id: str) -> bool:
+    """Whether the ticket's standing verdict files it as an order.
+
+    The catalogued type's group is the gate — the vocabulary wave put it on
+    `HD Ticket Type` precisely so a chain could ask this without a second
+    list of labels. The newest proposal is read, corrected type first; the
+    ticket's own coarse class counts too, for a ticket an agent typed by hand
+    before the model got to it.
+    """
+    triage = ai_triage.latest_triage(ticket_id)
+    if triage:
+        types = frappe.db.get_value(
+            "HD AI Triage Result",
+            triage,
+            ["corrected_ticket_type", "proposed_ticket_type"],
+            as_dict=True,
+        ) or {}
+        ticket_type = types.get("corrected_ticket_type") or types.get("proposed_ticket_type")
+        if classification_group(ticket_type) == "Order":
+            return True
+    return frappe.db.get_value("HD Ticket", ticket_id, "classification_model") == "Order"
+
+
+def _extract_if_order(
+    ticket_id: str, idempotency_key: str, source_message: str | None = None
+) -> bool:
+    """Record the order details when the ticket is an order; otherwise nothing.
+
+    An extraction that fails is a log line and a missing card, never a failed
+    chain: the triage before it stands, and the ticket was never at risk.
+    """
+    try:
+        if not _is_order(ticket_id):
+            return False
+        order_extraction.extract_order(
+            ticket_id=ticket_id,
+            idempotency_key=idempotency_key,
+            source_message=source_message,
+        )
+        return True
+    except Exception:
+        frappe.log_error(
+            title="Helpdesk AI ingress",
+            message=f"order extraction failed for {ticket_id}\n\n{frappe.get_traceback()}",
+        )
+        return False
 
 
 @frappe.whitelist(methods=["POST"])
