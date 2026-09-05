@@ -290,6 +290,21 @@ const options = computed(() => ({
     resolution_by: {
       custom: ({ row, item }) => handleResolutionByField(row, item),
     },
+    // Wave 17b: optional column, USD with four decimals; empty when the
+    // ticket has bought nothing. Label "AI-kostnad" as in the details tab.
+    ai_cost: {
+      label: __("AI-kostnad"),
+      custom: ({ item }) => {
+        if (item === null || item === undefined || item === "") return null;
+        const value = Number(item);
+        if (Number.isNaN(value)) return null;
+        return h(
+          "span",
+          { class: "tabular-nums text-ink-gray-7" },
+          "$" + value.toFixed(4)
+        );
+      },
+    },
   },
   isCustomerPortal: isCustomerPortal.value,
   selectable: true,

@@ -7,6 +7,16 @@
       <TicketContact />
       <TicketSLA />
       <TicketAITriage />
+      <!-- Wave 17b: what the ticket has cost in AI calls, summed over its
+           records by helpdesk.api.ai_cost. Only once something was bought;
+           a ticket with no priced record sums to 0 and shows no number. -->
+      <div
+        v-if="aiCost !== null"
+        class="flex items-center justify-between text-sm"
+      >
+        <span class="text-ink-gray-5">{{ __("AI-kostnad") }}</span>
+        <span class="tabular-nums text-ink-gray-7">{{ aiCost }}</span>
+      </div>
     </div>
 
     <!-- Scrollable sections: Key Info + Ticket Info + Recent / Similar Tickets -->
@@ -196,6 +206,16 @@ const { notifyTicketUpdate } = useNotifyTicketUpdate(ticket.value?.name);
 
 const dateFormat = window.date_format;
 const { getStatus, colorMap } = useTicketStatusStore();
+
+// USD with four decimals: a single call is fractions of a cent, and two
+// decimals would read as "0.00" for most tickets.
+const aiCost = computed(() => {
+  const raw = ticket.value?.doc?.ai_cost;
+  if (raw === null || raw === undefined || raw === "") return null;
+  const value = Number(raw);
+  if (Number.isNaN(value) || value === 0) return null;
+  return "$" + value.toFixed(4);
+});
 
 const CORE_FIELDS = ["priority", "ticket_type", "customer", "agent_group"];
 

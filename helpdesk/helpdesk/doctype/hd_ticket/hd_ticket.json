@@ -562,6 +562,14 @@
    "fieldtype": "Duration",
    "label": "Resolution Failed By",
    "read_only": 1
+  },
+  {
+   "description": "USD. The sum of what the AI records on this ticket cost; maintained by helpdesk.api.ai_cost, never edited by hand.",
+   "fieldname": "ai_cost",
+   "fieldtype": "Currency",
+   "label": "AI Cost",
+   "precision": "6",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
