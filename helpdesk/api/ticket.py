@@ -107,3 +107,68 @@ def delete_ticket(name: str):
             exc=frappe.PermissionError,
         )
     frappe.delete_doc("HD Ticket", name, force=True, ignore_permissions=True)
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def reply_and_set_status(
+    ticket_id: str,
+    message: str,
+    status: str,
+    to: str | None = None,
+    cc: str | None = None,
+    bcc: str | None = None,
+    attachments: list | str | None = None,
+    from_email: dict | str | None = None,
+) -> dict:
+    """Send an agent reply and move the ticket to `status` in one action.
+
+    The reply goes through the same path the editor's Send button uses
+    (HD Ticket.reply_via_agent), so it lands as a Sent Communication on the
+    thread. The status is checked before anything is sent: a status the site
+    has not defined must not cost the customer a message.
+    """
+    if isinstance(attachments, str):
+        attachments = frappe.parse_json(attachments) or []
+    if isinstance(from_email, str):
+        from_email = frappe.parse_json(from_email) or None
+
+    status = (status or "").strip()
+    if not status or not frappe.db.exists("HD Ticket Status", status):
+        frappe.throw(
+            _("Statusen '{0}' finns inte. Välj en befintlig ärendestatus.").format(
+                status
+            ),
+            title=_("Okänd status"),
+        )
+
+    frappe.has_permission("HD Ticket", "write", doc=ticket_id, throw=True)
+    ticket = frappe.get_doc("HD Ticket", ticket_id)
+
+    ticket.reply_via_agent(
+        message,
+        from_email=from_email,
+        to=to or ticket.raised_by,
+        cc=cc,
+        bcc=bcc,
+        attachments=attachments or [],
+    )
+
+    communication = frappe.db.get_value(
+        "Communication",
+        {
+            "reference_doctype": "HD Ticket",
+            "reference_name": ticket_id,
+            "sent_or_received": "Sent",
+        },
+        "name",
+        order_by="creation desc",
+    )
+
+    # save() rather than db.set_value so SLA and activity hooks see the change
+    ticket.reload()
+    if ticket.status != status:
+        ticket.status = status
+        ticket.save()
+
+    return {"communication": communication, "status": status}
