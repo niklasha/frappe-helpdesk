@@ -20,10 +20,25 @@ DEFAULT_REQUEST_TIMEOUT = 30
 # runner from before Wave 20 rejects a content list (parts) this way; the
 # caller may then try again with the text alone.
 REJECTED_STATUSES = (400, 422)
+# What an engine being momentarily out of reach looks like from here. 429 is a
+# rate limit stated plainly; the runner answers 502 when the upstream provider
+# failed, which is how an upstream 429 arrives today; 503 and 504 are the
+# runner or the provider being busy. None of them says the request was wrong,
+# so the very same question may well be answered by a different engine.
+UNAVAILABLE_STATUSES = (429, 502, 503, 504)
 
 
 class RunnerRejected(frappe.ValidationError):
     """The runner refused the request as malformed (HTTP 400 or 422)."""
+
+
+class RunnerUnavailable(frappe.ValidationError):
+    """The engine could not answer, though the request itself was fine.
+
+    Raised for a rate limit, an upstream failure, and a runner that could not
+    be reached at all. It is the one failure a caller may answer by asking
+    another engine: the question was never refused, only left unanswered.
+    """
 
 
 def _settings() -> "frappe.Document":
@@ -98,11 +113,20 @@ def generate(
             url, json=payload, timeout=settings["request_timeout"]
         )
     except requests.RequestException as exception:
-        frappe.throw(_("The AI runner could not be reached: {0}").format(exception))
+        frappe.throw(
+            _("The AI runner could not be reached: {0}").format(exception),
+            exc=RunnerUnavailable,
+        )
     if response.status_code != 200:
+        if response.status_code in REJECTED_STATUSES:
+            failure = RunnerRejected
+        elif response.status_code in UNAVAILABLE_STATUSES:
+            failure = RunnerUnavailable
+        else:
+            failure = frappe.ValidationError
         frappe.throw(
             _("The AI runner answered with status {0}.").format(response.status_code),
-            exc=RunnerRejected if response.status_code in REJECTED_STATUSES else frappe.ValidationError,
+            exc=failure,
         )
     try:
         result = response.json()
