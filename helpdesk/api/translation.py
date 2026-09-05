@@ -592,3 +592,84 @@ def ticket_translations(ticket_id: str) -> list:
         fields=list(TRANSLATION_VIEW_FIELDS),
         order_by="creation asc",
     )
+
+
+@frappe.whitelist()
+@agent_only
+def reply_language(ticket_id: str) -> dict:
+    """Return the language this ticket should be answered in, and where that came from.
+
+    Three sources, read in order of how much they are worth: the customer card
+    is a person's own statement of what they read, the thread is what the
+    ingress detected from the words they actually wrote, and the working
+    language is what is left when neither says anything. The source travels
+    with the answer so the editor can say «norska, enligt kundkortet» instead
+    of asserting a language nobody can trace back.
+
+    The reading lives here rather than in each caller because the editor, the
+    reply endpoint and whatever comes next would otherwise each carry their own
+    copy, and three copies of a rule disagree.
+    """
+    frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+    working = get_working_language()
+
+    language = _ticket_customer_language(ticket_id)
+    source = "customer"
+    if not language:
+        detected = frappe.get_all(
+            "HD Message Translation",
+            filters={"ticket": ticket_id, "direction": "Inbound"},
+            fields=["source_language"],
+            order_by="creation desc",
+            limit_page_length=1,
+        )
+        language = detected[0]["source_language"] if detected else None
+        source = "thread"
+    if not language:
+        language, source = working, "working"
+
+    return {
+        "language": language,
+        "source": source,
+        "working_language": working,
+        "needs_translation": 1 if language != working else 0,
+    }
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def draft_outbound(ticket_id: str, text: str) -> dict:
+    """Translate an agent's reply into the customer's language, without sending it.
+
+    A draft is a draft: the row is recorded unreviewed and unsent, because the
+    customer must not learn what the desk is about to say before an agent has
+    read it. Sending is a separate door, and pressing it is the review.
+
+    A ticket already in the working language buys nothing at all — the engine
+    is not asked, so translating Swedish into Swedish costs neither a call nor
+    a row. Noticing afterwards that the answer was the same would be paid for
+    all the same.
+    """
+    reply = reply_language(ticket_id)
+    if not reply["needs_translation"]:
+        return {
+            "needs_translation": 0,
+            "language": reply["language"],
+            "source": reply["source"],
+            "text": text,
+        }
+
+    row = generate_outbound_translation(
+        ticket_id=ticket_id, original_text=text, target_language=reply["language"]
+    )
+    return {
+        "needs_translation": 1,
+        "language": reply["language"],
+        "source": reply["source"],
+        "translation": row["name"],
+        "name": row["name"],
+        "original_text": row.get("original_text") or text,
+        "translated_text": row.get("translated_text"),
+        "reviewed": row.get("reviewed") or 0,
+        "sent_on": row.get("sent_on"),
+    }
