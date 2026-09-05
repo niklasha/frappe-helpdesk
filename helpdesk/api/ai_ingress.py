@@ -498,9 +498,12 @@ def _is_order(ticket_id: str) -> bool:
 
     The catalogued type's group is the gate — the vocabulary wave put it on
     `HD Ticket Type` precisely so a chain could ask this without a second
-    list of labels. The newest proposal is read, corrected type first; the
-    ticket's own coarse class counts too, for a ticket an agent typed by hand
-    before the model got to it.
+    list of labels. The newest proposal is read, corrected type first, and
+    when its type names a group, that group decides: a triage that says
+    Reklamation is not overruled by a keyword class that said Order before the
+    model got to it. The ticket's own coarse class counts only when there
+    is no triage, or the type states no group — a ticket an agent typed by
+    hand, or one filed under a group-less type.
     """
     triage = ai_triage.latest_triage(ticket_id)
     if triage:
@@ -511,8 +514,9 @@ def _is_order(ticket_id: str) -> bool:
             as_dict=True,
         ) or {}
         ticket_type = types.get("corrected_ticket_type") or types.get("proposed_ticket_type")
-        if classification_group(ticket_type) == "Order":
-            return True
+        group = classification_group(ticket_type)
+        if group:
+            return group == "Order"
     return frappe.db.get_value("HD Ticket", ticket_id, "classification_model") == "Order"
 
 

@@ -143,7 +143,7 @@ def _extraction_text(ticket_id: str, source_message: str | None) -> str:
     return f"{text}\n\nKundens svar:\n{reply}" if reply else text
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["GET", "POST"])
 @agent_only
 def ticket_extraction(ticket_id: str) -> dict | None:
     """The newest extraction on a ticket, for the order card — or nothing.
