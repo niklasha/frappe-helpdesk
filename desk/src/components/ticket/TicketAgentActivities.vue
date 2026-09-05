@@ -5,8 +5,25 @@
     :mask-length="20"
   >
     <div v-if="activities.length" class="activities flex-1 h-full mt-0.5">
+      <!-- The fold: older messages are collapsed behind a real button, so the
+           thread opens on the message that matters. Keyboard reachable, and it
+           announces its own state instead of hiding rows with CSS. -->
+      <div v-if="foldedCount" class="px-6 md:px-5 pt-2">
+        <button
+          type="button"
+          class="flex items-center gap-2 rounded px-2 py-1 text-sm text-ink-gray-6 hover:bg-surface-gray-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-outline-gray-3"
+          :aria-expanded="showAll"
+          @click="showAll = !showAll"
+        >
+          <FeatherIcon
+            :name="showAll ? 'chevron-up' : 'chevron-down'"
+            class="size-4"
+          />
+          <span>{{ __("Tidigare") }} · {{ foldedCount }}</span>
+        </button>
+      </div>
       <div
-        v-for="(activity, i) in activities"
+        v-for="(activity, i) in visibleActivities"
         :key="activity.key"
         class="activity mt-2"
         tabindex="0"
@@ -19,7 +36,7 @@
           <div
             class="relative flex justify-center after:absolute after:start-[50%] after:top-3 after:-z-10 after:border-s after:border-outline-elevation-2"
             :class="[
-              i != activities.length - 1 && 'after:h-full',
+              i != visibleActivities.length - 1 && 'after:h-full',
               !['email', 'feedback', 'call', 'comment'].includes(
                 activity.type
               ) && 'after:top-6',
@@ -65,7 +82,7 @@
           <div
             class="mb-4 flex flex-1"
             :class="[
-              i == activities.length - 1 && 'mb-5',
+              i == visibleActivities.length - 1 && 'mb-5',
               !['email', 'feedback', 'call', 'comment'].includes(
                 activity.type
               ) && 'mt-[2px]',
@@ -124,7 +141,16 @@ import { useUserStore } from "@/stores/user";
 import { TicketActivity } from "@/types";
 import { isElementInViewport } from "@/utils";
 import { Avatar, FeatherIcon } from "frappe-ui";
-import { PropType, computed, h, inject, nextTick, onMounted, watch } from "vue";
+import {
+  PropType,
+  computed,
+  h,
+  inject,
+  nextTick,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import { useRoute, useRouter } from "vue-router";
 import FeedbackBox from "../ticket-agent/FeedbackBox.vue";
 
@@ -150,6 +176,38 @@ const router = useRouter();
 
 const { getUser } = useUserStore();
 const makeCall = inject<() => void>("makeCall");
+
+// A ticket on its fourth reply is a wall of full mail bodies and the one that
+// matters is at the bottom. So the list opens on the newest message and folds
+// what came before it behind a button. Anything the agent wrote *after* that
+// message — a comment, an internal note, a status change — stays visible,
+// because folding away what someone just typed reads as data loss.
+const showAll = ref(false);
+
+// How many activities sit above the newest message body — the ones the fold
+// hides. Independent of `showAll`, so the button keeps its count and can fold
+// the thread back up again.
+const foldedCount = computed(() => {
+  const list = props.activities || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (["email", "feedback"].includes(list[i].type)) return i;
+  }
+  return 0;
+});
+
+const visibleActivities = computed(() => {
+  const list = props.activities || [];
+  return showAll.value ? list : list.slice(foldedCount.value);
+});
+
+// A different tab (Emails / Comments / Calls) is a different thread; it opens
+// folded again rather than inheriting the previous tab's expanded state.
+watch(
+  () => props.title,
+  () => {
+    showAll.value = false;
+  }
+);
 
 const emptyText = computed(() => {
   if (props.title === "Emails") return "No email communications";
