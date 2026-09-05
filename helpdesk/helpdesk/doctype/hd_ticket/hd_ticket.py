@@ -135,15 +135,22 @@ class HDTicket(Document):
         self.set_external_mail()
         self.set_raised_by()
         self.set_priority()
+        # The contact and the customer before the SLA: the SLA is matched on
+        # the priority and its conditions read the customer, so the customer
+        # must be resolved (contact, then sender domain) and the key-account
+        # lift applied before set_sla() looks at either. The lift only touches
+        # a priority that fell through to the default, which set_priority()
+        # has just decided.
+        self.validate_portal_contact()
+        self.set_contact()
+        self.set_customer()
+        self.set_customer_from_domain()
+        self.lift_key_account_priority()
         self.set_first_responded_on()
         self.set_feedback_values()
         self.set_default_status()
         self.set_status_category()
         self.set_sla()
-
-        self.validate_portal_contact()
-        self.set_contact()
-        self.set_customer()
 
     def validate(self):
         self.validate_feedback()
@@ -617,6 +624,45 @@ class HDTicket(Document):
                     frappe.ValidationError,
                 )
 
+    def set_customer_from_domain(self):
+        """Resolve the customer from the sender's domain when nothing else did.
+
+        A first mail from a known account has no contact, so set_customer
+        leaves the customer empty; the domain on HD Customer (or one of its
+        extra_domains) is what identifies the sender then. A customer set by
+        hand or from the contact is never overridden.
+        """
+        if self.customer or not self.is_new() or not self.raised_by:
+            return
+        from helpdesk.api.customer import resolve_customer_by_domain
+
+        self.customer = resolve_customer_by_domain(self.raised_by)
+
+    def lift_key_account_priority(self):
+        """A key account's ticket is High unless a rule already decided.
+
+        Runs after the customer is resolved. Only a priority that fell through
+        to the type's or the site's default is lifted, so a priority rule, an
+        agent's choice or an urgent keyword always wins over the profile.
+        """
+        if not self.is_new() or not self.customer:
+            return
+        if not self.flags.get("priority_defaulted"):
+            return
+        if not frappe.db.get_value("HD Customer", self.customer, "key_account"):
+            return
+        high = frappe.db.get_value("HD Ticket Priority", {"level": "High"}, "name")
+        if not high:
+            return
+        current = (
+            frappe.db.get_value("HD Ticket Priority", self.priority, "level")
+            if self.priority
+            else None
+        )
+        if current in ("Urgent", "High"):
+            return
+        self.priority = high
+
     def set_priority(self):
         if self.priority:
             return
@@ -650,6 +696,8 @@ class HDTicket(Document):
         self.priority = frappe.get_cached_value(
             "HD Ticket Type", self.ticket_type, "priority"
         ) or frappe.get_cached_value("HD Settings", "HD Settings", "default_priority")
+        # Nothing but a default chose this; a key account may lift it later.
+        self.flags.priority_defaulted = True
 
     def set_first_responded_on(self):
         if self.is_new():

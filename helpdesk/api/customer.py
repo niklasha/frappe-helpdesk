@@ -1,7 +1,10 @@
+from email.utils import parseaddr
+
 import frappe
 from frappe.model.document import Document
 
 from helpdesk.api.contact import create_contact
+from helpdesk.utils import agent_only
 
 
 @frappe.whitelist()
@@ -69,3 +72,114 @@ def delete_customer(name: str, delete_tickets: bool = False) -> None:
     permission = "delete" if delete_tickets else "write"
     frappe.has_permission("HD Ticket", permission, throw=True)
     frappe.delete_doc("HD Customer", name, flags={"delete_tickets": delete_tickets})
+
+
+# The fields of the profile the order desk keeps on a customer (Wave 19).
+PROFILE_FIELDS = (
+    "key_account",
+    "default_product",
+    "proof_required",
+    "delivery_default",
+    "desk_notes",
+    "extra_domains",
+)
+
+
+def sender_domain(email: str | None) -> str:
+    """The casefolded domain of an address, or an empty string."""
+    address = parseaddr(email or "")[1] or (email or "")
+    if "@" not in address:
+        return ""
+    return address.rsplit("@", 1)[-1].strip().casefold()
+
+
+def resolve_customer_by_domain(email: str | None) -> str | None:
+    """The HD Customer whose domain or extra_domains carries the sender's domain.
+
+    `domain` is matched exactly, case-insensitively. `extra_domains` is a
+    comma-separated line whose entries may carry whitespace; each entry is
+    matched the same way. The primary domain wins over an extra one.
+    """
+    domain = sender_domain(email)
+    if not domain:
+        return None
+
+    rows = frappe.get_all(
+        "HD Customer",
+        fields=["name", "domain", "extra_domains"],
+        or_filters=[
+            ["domain", "like", domain],
+            ["extra_domains", "like", f"%{domain}%"],
+        ],
+    )
+    fallback = None
+    for row in rows:
+        if (row.domain or "").strip().casefold() == domain:
+            return row.name
+        extras = (row.extra_domains or "").replace("\n", ",").split(",")
+        if fallback is None and any(e.strip().casefold() == domain for e in extras):
+            fallback = row.name
+    return fallback
+
+
+def customer_profile_card(customer: str) -> dict:
+    """The customer's name and the six profile fields, as one dict."""
+    card = frappe.db.get_value(
+        "HD Customer",
+        customer,
+        ["name", "customer_name", *PROFILE_FIELDS],
+        as_dict=True,
+    )
+    return dict(card) if card else {}
+
+
+@frappe.whitelist(methods=["GET", "POST"])
+@agent_only
+def customer_profile(ticket_id: str) -> dict:
+    """Everything the Kund tab shows for the customer of a ticket.
+
+    The profile card, the customer's other open tickets, its most recent
+    tickets, and the originals — the files attached to any of the customer's
+    tickets — so "the logo from last time" is one click away.
+    """
+    customer = frappe.db.get_value("HD Ticket", ticket_id, "customer")
+    if not customer:
+        return {"customer": None, "open_tickets": [], "recent_tickets": [], "originals": []}
+
+    open_tickets = frappe.get_all(
+        "HD Ticket",
+        filters={
+            "customer": customer,
+            "status_category": "Open",
+            "name": ["!=", ticket_id],
+        },
+        fields=["name", "subject", "status", "priority", "modified"],
+        order_by="modified desc",
+    )
+    recent_tickets = frappe.get_all(
+        "HD Ticket",
+        filters={"customer": customer},
+        fields=["name", "subject", "status", "status_category", "modified"],
+        order_by="modified desc",
+        limit_page_length=10,
+    )
+    ticket_names = frappe.get_all("HD Ticket", {"customer": customer}, pluck="name")
+    originals = (
+        frappe.get_all(
+            "File",
+            filters={
+                "attached_to_doctype": "HD Ticket",
+                "attached_to_name": ["in", ticket_names],
+            },
+            fields=["file_name", "file_url", "attached_to_name as ticket", "creation"],
+            order_by="creation desc",
+        )
+        if ticket_names
+        else []
+    )
+    return {
+        "customer": customer_profile_card(customer),
+        "open_tickets": open_tickets,
+        "recent_tickets": recent_tickets,
+        "originals": originals,
+    }

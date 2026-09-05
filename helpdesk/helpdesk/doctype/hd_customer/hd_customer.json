@@ -21,6 +21,14 @@
   "primary_contact",
   "email_id",
   "mobile_no",
+  "desk_defaults_section",
+  "key_account",
+  "default_product",
+  "proof_required",
+  "column_break_desk",
+  "delivery_default",
+  "desk_notes",
+  "extra_domains",
   "section_break_fxor",
   "contacts",
   "references_tab",
@@ -139,12 +147,61 @@
    "fieldtype": "Link",
    "label": "Country",
    "options": "Country"
+  },
+  {
+   "fieldname": "desk_defaults_section",
+   "fieldtype": "Section Break",
+   "label": "Orderbordets standardval"
+  },
+  {
+   "default": "0",
+   "fieldname": "key_account",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Key Account",
+   "description": "Tickets from this customer are lifted to High priority and never asked for the default product"
+  },
+  {
+   "fieldname": "default_product",
+   "fieldtype": "Data",
+   "label": "Default Product",
+   "description": "The product this customer orders without naming it"
+  },
+  {
+   "default": "1",
+   "fieldname": "proof_required",
+   "fieldtype": "Check",
+   "label": "Proof Required",
+   "description": "A proof must be approved before production"
+  },
+  {
+   "fieldname": "column_break_desk",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "delivery_default",
+   "fieldtype": "Small Text",
+   "label": "Delivery Default",
+   "description": "How orders are usually delivered"
+  },
+  {
+   "fieldname": "desk_notes",
+   "fieldtype": "Small Text",
+   "label": "Desk Notes",
+   "description": "What the desk has learned about this customer"
+  },
+  {
+   "fieldname": "extra_domains",
+   "fieldtype": "Small Text",
+   "label": "Extra Domains",
+   "description": "Other sender domains that belong to this customer, comma-separated"
   }
  ],
  "image_field": "image",
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-06-20 15:34:00.998330",
+ "modified": "2026-09-05 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Helpdesk",
  "name": "HD Customer",
