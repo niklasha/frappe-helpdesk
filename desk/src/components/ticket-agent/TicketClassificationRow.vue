@@ -1,12 +1,3 @@
-
-// source_message_on rides on the same response as the proposal.
-const assessedAfter = computed(() => {
-  const p = proposal.value;
-  if (!p?.source_message) return "";
-  return p.source_message_on
-    ? dayjs(p.source_message_on).format("YYYY-MM-DD HH:mm")
-    : p.source_message;
-});
 <template>
   <!-- S-2026-09-04 area 3: the classification lives on the header line, not
        only in the sidebar. One row: what the ticket is, what the AI proposes,
@@ -147,6 +138,14 @@ watch(
 
 // ticket_triage always answers with a dict; {next_step} alone means no triage.
 const proposal = computed(() => (triage.data?.name ? triage.data : null));
+
+// AIAN-17: source_message_on rides on the same response as the proposal; it is
+// only set when source_message names a Communication (a re-triage), never for
+// the free text a first-pass row stores there.
+const assessedAfter = computed(() => {
+  const on = proposal.value?.source_message_on;
+  return on ? dayjs(on).format("YYYY-MM-DD HH:mm") : "";
+});
 
 // next_step rides on the same response; null means the endpoint predates it.
 const nextStep = computed(() => triage.data?.next_step || "");

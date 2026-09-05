@@ -556,8 +556,14 @@ def ticket_triage(ticket_id: str) -> dict:
     answer = dict(triage) if triage else {}
     if triage:
         answer["supersedes"] = rows[1].name if len(rows) > 1 else None
+        # source_message is Long Text: a re-triage stores the Communication name,
+        # a first pass (W2) stores the message text itself. Only the former
+        # resolves to a date; for the latter get_value finds nothing and the
+        # panel simply has no "bedömd efter" line.
         answer["source_message_on"] = (
-            frappe.db.get_value("Communication", triage.source_message, "communication_date")
+            frappe.db.get_value(
+                "Communication", triage.source_message, "communication_date"
+            )
             if triage.source_message
             else None
         )

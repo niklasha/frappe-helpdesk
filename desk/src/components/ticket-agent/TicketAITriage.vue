@@ -1,13 +1,3 @@
-
-// The endpoint carries the message date (source_message_on) beside the
-// message name, so no second call is needed to say when the reply came.
-const assessedAfter = computed(() => {
-  const t = triage.data;
-  if (!t?.source_message) return "";
-  return t.source_message_on
-    ? dayjs(t.source_message_on).format("YYYY-MM-DD HH:mm")
-    : t.source_message;
-});
 <template>
   <!-- ticket_triage now always answers with a dict (AIAN-16); only one that
        carries a record name is a proposal worth a panel. -->
@@ -123,4 +113,12 @@ const corrected = computed(() => Boolean(triage.data?.corrected_classification))
 const confidencePercent = computed(() =>
   Math.round((Number(triage.data?.confidence) || 0) * 100)
 );
+
+// AIAN-17: a re-triage names the Communication it read, and the endpoint sends
+// that message's date beside it (source_message_on). A W2 row keeps free text
+// in source_message, so only a resolved date makes a line worth showing.
+const assessedAfter = computed(() => {
+  const on = triage.data?.source_message_on;
+  return on ? dayjs(on).format("YYYY-MM-DD HH:mm") : "";
+});
 </script>
