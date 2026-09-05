@@ -8,6 +8,7 @@
     <template #tab-panel="{ tab }">
       <TicketAnalyticsTab v-if="tab.name === 'analytics'" />
       <TicketCustomerTab v-else-if="tab.name === 'customer'" />
+      <TicketWorkMaterial v-else-if="tab.name === 'files'" mode="full" />
       <TicketAgentActivities
         v-else-if="Boolean(activities.data)"
         ref="ticketAgentActivitiesRef"
@@ -59,6 +60,8 @@ import {
 } from "@/components/icons";
 import TicketAnalyticsTab from "@/components/ticket-agent/analytics/TicketAnalyticsTab.vue";
 import TicketCustomerTab from "@/components/ticket-agent/TicketCustomerTab.vue";
+import TicketWorkMaterial from "@/components/ticket-agent/TicketWorkMaterial.vue";
+import LucidePaperclip from "~icons/lucide/paperclip";
 import LucideChartNoAxesColumn from "~icons/lucide/chart-no-axes-column";
 import LucideBuilding from "~icons/lucide/building-2";
 import { useActiveTabManager } from "@/composables/useActiveTabManager";
@@ -118,6 +121,12 @@ const tabs: ComputedRef<TabObject[]> = computed(() => {
     name: "customer",
     label: __("Kund"),
     icon: LucideBuilding,
+  });
+  // S/7: the file inventory (Arbetsunderlag) in full, one row per file.
+  _tabs.push({
+    name: "files",
+    label: __("Filer"),
+    icon: LucidePaperclip,
   });
   return _tabs;
 });
