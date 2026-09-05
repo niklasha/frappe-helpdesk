@@ -5,12 +5,15 @@ the runner, keep the provenance. Every generator after it needs the same three
 things, plus one more — a structured answer it can act on — so they live here
 once instead of being written again per endpoint.
 
-The runner contract stays text in, text out. A structured result is therefore
-asked for in the prompt and parsed back out of the text, and an answer that is
-not the JSON the caller asked for is refused rather than half-understood.
+The runner contract is text out; in goes text, and since Wave 20 a picture
+beside it when the ticket carries one. A structured result is therefore asked
+for in the prompt and parsed back out of the text, and an answer that is not
+the JSON the caller asked for is refused rather than half-understood.
 """
 
+import base64
 import json
+import re
 
 import frappe
 from frappe import _
@@ -341,11 +344,199 @@ def with_customer_context(ticket_id: str, content: str) -> str:
     return f"{content}\n\n{context}" if context else content
 
 
-def _messages(instructions: str, schema_hint: str, content: str) -> list:
-    """Show the engine its instructions and the shape of the answer, then the material."""
+# The inventory of a ticket's files (Wave 20, FILE-01) — one row per File on
+# the ticket or on one of its messages, classified from the bytes. Read here
+# so the model is told what the bytes say before it is shown the picture.
+TICKET_FILE = "HD Ticket File"
+TICKET_FILE_FIELDS = (
+    "file",
+    "file_name",
+    "file_url",
+    "format",
+    "kind",
+    "vector",
+    "relevance",
+    "source",
+    "width",
+    "height",
+    "pages",
+)
+# What is shown to the model as a picture: the raster formats a provider's
+# image input accepts. A raster PDF is named in the text, not shown.
+IMAGE_MIME = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
+}
+MAX_IMAGE_PARTS = 4
+MAX_IMAGE_BYTES = 1_500_000
+ATTACHMENTS_HEADING = "Bifogade filer (bedömda från innehållet, inte från namnet):"
+
+
+def _ticket_file_rows(ticket_id: str) -> list[dict]:
+    """The inventory's rows for one ticket, or nothing when there is none.
+
+    The doctype belongs to the sibling slice; a site migrated without it
+    reads as a ticket without files rather than as an error in the triage.
+    Only the columns the doctype actually has are asked for.
+    """
+    if not frappe.db.table_exists(TICKET_FILE):
+        return []
+    meta = frappe.get_meta(TICKET_FILE)
+    link = next(
+        (f.fieldname for f in meta.fields if f.fieldtype == "Link" and f.options == "HD Ticket"),
+        None,
+    )
+    if not link:
+        return []
+    fields = ["name"] + [f for f in TICKET_FILE_FIELDS if meta.has_field(f)]
+    return frappe.get_all(
+        TICKET_FILE,
+        filters={link: ticket_id},
+        fields=fields,
+        order_by="creation asc",
+        limit_page_length=0,
+    )
+
+
+def _file_line(row: dict) -> str:
+    """`logo.png: raster, png, 4×4` — the verdict the bytes already gave."""
+    details = [str(row.get("kind") or "okänd").lower(), row.get("format") or "?"]
+    if row.get("width") and row.get("height"):
+        details.append(f"{cint(row['width'])}×{cint(row['height'])} px")
+    elif row.get("pages"):
+        details.append(f"{cint(row['pages'])} sidor")
+    return f"- {row.get('file_name')}: " + ", ".join(details)
+
+
+def _file_doc(row: dict):
+    """The File record behind one inventory row, or None."""
+    name = row.get("file")
+    if not name and row.get("file_url"):
+        name = frappe.db.get_value("File", {"file_url": row["file_url"]}, "name")
+    if not name:
+        return None
+    try:
+        return frappe.get_doc("File", name)
+    except frappe.DoesNotExistError:
+        return None
+
+
+def _image_part(row: dict) -> dict | None:
+    """One raster file as the data URL an image part carries, or None.
+
+    None when the file is not a picture a provider takes, cannot be read, or
+    is bigger than the cap: a photo from a phone is not worth the tokens,
+    and the text line already says what it is.
+    """
+    mime = IMAGE_MIME.get(str(row.get("format") or "").lower())
+    if not mime or str(row.get("kind") or "") != "Raster":
+        return None
+    doc = _file_doc(row)
+    if not doc:
+        return None
+    try:
+        content = doc.get_content()
+    except Exception:
+        return None
+    if isinstance(content, str):
+        content = content.encode()
+    if not content or len(content) > MAX_IMAGE_BYTES:
+        return None
+    return {
+        "type": "image",
+        "data_url": f"data:{mime};base64,{base64.b64encode(content).decode()}",
+    }
+
+
+def attachments_context(ticket_id: str) -> tuple[str, list[dict]]:
+    """(the inventory as text, the raster images as parts) for one ticket.
+
+    The rehearsal's "PNG, inte vektoriserad" was the customer's own words
+    read back (K7, B9). Here the model is told what the bytes say — one line
+    per file, the deterministic verdict — and shown the picture beside it,
+    so what it says about a file is about the file. At most MAX_IMAGE_PARTS
+    pictures travel; the rest are still named in the text. Empty when the
+    ticket has no files.
+    """
+    rows = _ticket_file_rows(ticket_id)
+    if not rows:
+        return "", []
+    lines = [ATTACHMENTS_HEADING] + [_file_line(row) for row in rows]
+    parts = []
+    for row in rows:
+        if len(parts) >= MAX_IMAGE_PARTS:
+            break
+        part = _image_part(row)
+        if part:
+            parts.append(part)
+    if parts:
+        lines.append(
+            f"{len(parts)} av filerna visas som bild nedan. Bedöm varje fil i "
+            "attachment_assessment och nämn den vid filnamn; motsäg aldrig "
+            "verdiktet ovan."
+        )
+    return "\n".join(lines), parts
+
+
+def with_attachments(content: str, attachments_text: str) -> str:
+    """`content` with the file inventory appended, when there is one."""
+    return f"{content}\n\n{attachments_text}" if attachments_text else content
+
+
+def _sentences(text: str) -> list[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text or "") if s.strip()]
+
+
+def record_file_assessment(ticket_id: str, assessment: str | None) -> list[str]:
+    """Put what the model said about a file on that file's inventory row.
+
+    The triage's `attachment_assessment` is a paragraph; the strip needs the
+    sentence about logo.png on logo.png's row, marked as the model's, so the
+    desk can tell the bytes' verdict from the model's opinion. Only a row the
+    text names by file name is written; a paragraph that names no file is
+    left where it is. Returns the rows written.
+    """
+    text = (assessment or "").strip()
+    if not text:
+        return []
+    meta = frappe.get_meta(TICKET_FILE) if frappe.db.table_exists(TICKET_FILE) else None
+    if not meta or not meta.has_field("assessment") or not meta.has_field("assessed_by"):
+        return []
+    written = []
+    sentences = _sentences(text)
+    for row in _ticket_file_rows(ticket_id):
+        file_name = str(row.get("file_name") or "")
+        if not file_name or file_name.casefold() not in text.casefold():
+            continue
+        about = [s for s in sentences if file_name.casefold() in s.casefold()] or [text]
+        frappe.db.set_value(
+            TICKET_FILE,
+            row["name"],
+            {"assessment": " ".join(about), "assessed_by": "model"},
+            update_modified=False,
+        )
+        written.append(row["name"])
+    return written
+
+
+def _messages(
+    instructions: str, schema_hint: str, content: str, image_parts: list[dict] | None = None
+) -> list:
+    """Show the engine its instructions and the shape of the answer, then the material.
+
+    The user turn is a plain string unless pictures travel with it; then it
+    is a list of parts, text first (Wave 20). The string form is kept for
+    every text-only call, so the wire the earlier waves assert on is unchanged.
+    """
+    user = (
+        [{"type": "text", "text": content}, *image_parts] if image_parts else content
+    )
     return [
         {"role": "system", "content": f"{instructions}\n\n{schema_hint}"},
-        {"role": "user", "content": content},
+        {"role": "user", "content": user},
     ]
 
 
@@ -529,6 +720,7 @@ def generate_json(
     content: str,
     schema_hint: str,
     required_keys: tuple[str, ...] = (),
+    image_parts: list[dict] | None = None,
 ) -> tuple[dict, dict]:
     """Ask the engine for one JSON object, and return it with its provenance.
 
@@ -539,6 +731,9 @@ def generate_json(
     An object that states none of the keys the caller asked about is refused
     for the same reason. It parses, but it answers nothing, and recording it
     would leave a hollow row that looks like a result somebody could act on.
+
+    `image_parts` are the pictures shown beside the material (Wave 20); with
+    any, the user turn goes out as a content list rather than a string.
     """
     # The demand for JSON is the call's, not the prompt's. A site's tuned
     # fragment for a call (the order desk's extraction wording, seeded from the
@@ -549,7 +744,8 @@ def generate_json(
     if JSON_ONLY.split(".")[0] not in instructions and JSON_ONLY.split(".")[0] not in schema_hint:
         schema_hint = f"{schema_hint}\n\n{JSON_ONLY}".strip()
     response = ai_runner.generate(
-        engine=engine, messages=_messages(instructions, schema_hint, content)
+        engine=engine,
+        messages=_messages(instructions, schema_hint, content, image_parts),
     )
     try:
         answer = json.loads(_unfenced(response.get("text")))

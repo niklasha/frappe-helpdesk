@@ -74,6 +74,11 @@ def generate(
 
     The runner resolves the provider behind the engine from its own raphain
     registry, so what travels is only the engine's name and the conversation.
+
+    A message's content is a string, or (Wave 20) a list of parts —
+    `{"type": "text", "text"}` and `{"type": "image", "data_url"}` with a
+    base64 data URL — when a picture is shown beside the text. The list goes
+    to the runner as built; the string form is unchanged.
     """
     settings = _settings()
     if not (settings["enabled"] and settings["runner_url"]):

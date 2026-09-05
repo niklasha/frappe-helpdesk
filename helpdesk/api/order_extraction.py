@@ -9,8 +9,11 @@ from helpdesk.utils import agent_only
 
 EXTRACTION_SCHEMA = (
     "Use these keys and no others: product, quantity (a number), size, colors, "
-    "production_option, delivery_information, original_files. Do not say "
-    "whether the order is complete or ready; that is not yours to judge."
+    "production_option, delivery_information, original_files, "
+    "attachment_assessment (one sentence per attached file, naming the file "
+    "and whether it will do as print original; leave out when there are no "
+    "files). Do not say whether the order is complete or ready; that is not "
+    "yours to judge."
 )
 
 EXTRACTION_FIELDS = (
@@ -21,6 +24,7 @@ EXTRACTION_FIELDS = (
     "production_option",
     "delivery_information",
     "original_files",
+    "attachment_assessment",
 )
 
 # What the order card reads off an extraction. Named rather than as_dict so the
@@ -139,12 +143,18 @@ def extract_order(
     instructions, prompt_version = ai_generation._prompt(
         ai_generation.ORDER_EXTRACTION
     )
+    # The files as the bytes say they are, and the pictures themselves (Wave
+    # 20, FILE-02), so original_files and its assessment are about the files.
+    files_text, image_parts = ai_generation.attachments_context(ticket_id)
     answer, response = ai_generation.generate_json(
         engine,
         instructions,
-        _extraction_text(ticket_id, source_message),
+        ai_generation.with_attachments(
+            _extraction_text(ticket_id, source_message), files_text
+        ),
         EXTRACTION_SCHEMA,
         EXTRACTION_FIELDS,
+        image_parts=image_parts,
     )
     details = {field: answer[field] for field in EXTRACTION_FIELDS if field in answer}
     generation = ai_generation.provenance(response, prompt_version, engine)
@@ -158,6 +168,7 @@ def extract_order(
     ai_generation.attribute(
         "extracted an order", "HD Order Extraction", result["name"], generation
     )
+    ai_generation.record_file_assessment(ticket_id, details.get("attachment_assessment"))
     return result
 
 

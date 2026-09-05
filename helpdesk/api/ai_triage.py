@@ -16,7 +16,10 @@ TRIAGE_SCHEMA = (
     "priority (Low, Medium, High or Urgent), suggested_agent (an email "
     "address), confidence (0 to 1), rationale, summary, missing_information "
     "(one sentence naming what the customer has not told us, not a list), "
-    "complaint (true or false), repeat_order (true or false)."
+    "complaint (true or false), repeat_order (true or false), "
+    "attachment_assessment (one sentence per attached file, naming the file "
+    "and saying whether it will do as a print original; leave it out when "
+    "there are no files)."
 )
 
 TRIAGE_FIELDS = (
@@ -29,6 +32,7 @@ TRIAGE_FIELDS = (
     "missing_information",
     "complaint",
     "repeat_order",
+    "attachment_assessment",
 )
 
 TRIAGE_LINKS = {"priority": "HD Ticket Priority", "suggested_agent": "User"}
@@ -80,7 +84,13 @@ def _schema_with_catalogue() -> str:
 
 # Fields that are prose in the record and that a model readily answers with a
 # list instead — reasonably, since "what is missing" is naturally several things.
-PROSE_FIELDS = ("missing_information", "rationale", "summary", "classification")
+PROSE_FIELDS = (
+    "missing_information",
+    "rationale",
+    "summary",
+    "classification",
+    "attachment_assessment",
+)
 
 
 def _as_prose(value):
@@ -324,12 +334,18 @@ def triage_ticket(
         content = ai_generation.with_customer_context(
             ticket_id, ai_generation.ticket_text(ticket_id)
         )
+    # The files as the bytes say they are, and the pictures themselves (Wave
+    # 20, FILE-02): the verdict on an attachment is about the attachment, not
+    # about what the customer called it.
+    files_text, image_parts = ai_generation.attachments_context(ticket_id)
+    content = ai_generation.with_attachments(content, files_text)
     answer, response = ai_generation.generate_json(
         engine,
         instructions,
         content,
         _schema_with_catalogue(),
         TRIAGE_FIELDS,
+        image_parts=image_parts,
     )
     proposal = _linked_values(
         _prose_values({field: answer[field] for field in TRIAGE_FIELDS if field in answer})
@@ -348,6 +364,9 @@ def triage_ticket(
     ai_generation.attribute(
         "triaged a ticket", "HD AI Triage Result", result["name"], generation
     )
+    # What the model said about a file goes on that file's row, marked as
+    # the model's, beside the verdict the bytes gave.
+    ai_generation.record_file_assessment(ticket_id, proposal.get("attachment_assessment"))
     return result
 
 
