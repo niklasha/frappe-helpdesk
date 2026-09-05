@@ -194,7 +194,9 @@ def reply_translated(
 
     frappe.has_permission("HD Ticket", "write", doc=ticket_id, throw=True)
 
-    doc = frappe.get_doc("HD Message Translation", translation_id)
+    # Locked for update: two presses of the same button must not both pass
+    # the "already sent" guard below and send the customer the mail twice.
+    doc = frappe.get_doc("HD Message Translation", translation_id, for_update=True)
     if doc.ticket != ticket_id:
         frappe.throw(
             _("Översättningen hör till ett annat ärende och kan inte skickas här."),
@@ -229,6 +231,15 @@ def reply_translated(
             title=_("Okänd status"),
         )
 
+    # The marks land before the mail leaves. Through the Wave 4 endpoints, so
+    # the refusal they encode keeps guarding every other caller and the review
+    # carries the agent's name; review first, because mark_translation_sent
+    # refuses an unreviewed row. If the send fails the request rolls back and
+    # the marks go with it; done the other way round, a failure after the mail
+    # had gone would leave a sent mail beside a row that says unsent.
+    review_translation(translation_id)
+    row = mark_translation_sent(translation_id)
+
     ticket = frappe.get_doc("HD Ticket", ticket_id)
     ticket.reply_via_agent(message, to=ticket.raised_by)
 
@@ -243,10 +254,16 @@ def reply_translated(
         order_by="creation desc",
     )
 
-    # Through the Wave 4 endpoints, so the refusal they encode keeps guarding
-    # every other caller and the review carries the agent's name.
-    review_translation(translation_id)
-    row = mark_translation_sent(translation_id)
+    # Link the row to the message it was sent as, so the thread can show
+    # which mail the translation belongs to.
+    if (
+        communication
+        and frappe.get_meta("HD Message Translation").has_field("message")
+        and not doc.message
+    ):
+        frappe.db.set_value(
+            "HD Message Translation", translation_id, "message", communication
+        )
 
     if status:
         # save() rather than db.set_value so SLA and activity hooks see it
