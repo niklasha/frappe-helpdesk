@@ -411,17 +411,12 @@ def _file_line(row: dict) -> str:
     return f"- {row.get('file_name')}: " + ", ".join(details)
 
 
-def _file_doc(row: dict):
-    """The File record behind one inventory row, or None."""
+def _file_name(row: dict) -> str | None:
+    """The name of the File record behind one inventory row, or None."""
     name = row.get("file")
     if not name and row.get("file_url"):
         name = frappe.db.get_value("File", {"file_url": row["file_url"]}, "name")
-    if not name:
-        return None
-    try:
-        return frappe.get_doc("File", name)
-    except frappe.DoesNotExistError:
-        return None
+    return name or None
 
 
 def _image_part(row: dict) -> dict | None:
@@ -434,11 +429,15 @@ def _image_part(row: dict) -> dict | None:
     mime = IMAGE_MIME.get(str(row.get("format") or "").lower())
     if not mime or str(row.get("kind") or "") != "Raster":
         return None
-    doc = _file_doc(row)
-    if not doc:
+    name = _file_name(row)
+    if not name:
+        return None
+    # The size is a column; the bytes are a read from disk or a bucket. A
+    # photo from a phone is refused on the column, before anything is opened.
+    if cint(frappe.db.get_value("File", name, "file_size")) > MAX_IMAGE_BYTES:
         return None
     try:
-        content = doc.get_content()
+        content = frappe.get_doc("File", name).get_content()
     except Exception:
         return None
     if isinstance(content, str):
@@ -451,6 +450,31 @@ def _image_part(row: dict) -> dict | None:
     }
 
 
+def _sync_inventory(ticket_id: str) -> None:
+    """Have the sibling's inventory read files it has not reached yet.
+
+    The inventory's own job may still be queued when the triage runs; a
+    triage that read the rows as they stood would miss the mail's
+    attachments. The module belongs to the other slice, so its absence is a
+    site without an inventory, not an error in the triage; and a failure to
+    read a file is the inventory's to log, never the triage's to fail on.
+    """
+    try:
+        from helpdesk.api import ticket_files
+    except ImportError:
+        return
+    sync = getattr(ticket_files, "_sync", None)
+    if not sync or not frappe.db.table_exists(TICKET_FILE):
+        return
+    try:
+        sync(ticket_id, reclassify=False)
+    except Exception:
+        frappe.log_error(
+            title="Helpdesk AI triage",
+            message=f"could not inventory the files on {ticket_id}\n\n{frappe.get_traceback()}",
+        )
+
+
 def attachments_context(ticket_id: str) -> tuple[str, list[dict]]:
     """(the inventory as text, the raster images as parts) for one ticket.
 
@@ -461,6 +485,7 @@ def attachments_context(ticket_id: str) -> tuple[str, list[dict]]:
     pictures travel; the rest are still named in the text. Empty when the
     ticket has no files.
     """
+    _sync_inventory(ticket_id)
     rows = _ticket_file_rows(ticket_id)
     if not rows:
         return "", []
@@ -743,10 +768,27 @@ def generate_json(
     # the composed instructions do not already carry it.
     if JSON_ONLY.split(".")[0] not in instructions and JSON_ONLY.split(".")[0] not in schema_hint:
         schema_hint = f"{schema_hint}\n\n{JSON_ONLY}".strip()
-    response = ai_runner.generate(
-        engine=engine,
-        messages=_messages(instructions, schema_hint, content, image_parts),
-    )
+    try:
+        response = ai_runner.generate(
+            engine=engine,
+            messages=_messages(instructions, schema_hint, content, image_parts),
+        )
+    except ai_runner.RunnerRejected:
+        if not image_parts:
+            raise
+        # A runner from before Wave 20 does not take a content list. The
+        # pictures are dropped and the text goes alone, so a stale runner
+        # costs the model its look at the files rather than the whole triage.
+        frappe.log_error(
+            title="Helpdesk AI runner",
+            message=(
+                "the runner rejected a message with image parts; "
+                "retrying with text only\n\n" + frappe.get_traceback()
+            ),
+        )
+        response = ai_runner.generate(
+            engine=engine, messages=_messages(instructions, schema_hint, content)
+        )
     try:
         answer = json.loads(_unfenced(response.get("text")))
     except ValueError:

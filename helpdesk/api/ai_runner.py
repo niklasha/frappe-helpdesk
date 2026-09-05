@@ -16,6 +16,14 @@ from helpdesk.utils import agent_only, is_admin
 RUNNER_SETTINGS = "HD AI Runner Settings"
 GENERATE_PATH = "/v1/generate"
 DEFAULT_REQUEST_TIMEOUT = 30
+# What a runner answers when it does not understand the request body. A
+# runner from before Wave 20 rejects a content list (parts) this way; the
+# caller may then try again with the text alone.
+REJECTED_STATUSES = (400, 422)
+
+
+class RunnerRejected(frappe.ValidationError):
+    """The runner refused the request as malformed (HTTP 400 or 422)."""
 
 
 def _settings() -> "frappe.Document":
@@ -93,7 +101,8 @@ def generate(
         frappe.throw(_("The AI runner could not be reached: {0}").format(exception))
     if response.status_code != 200:
         frappe.throw(
-            _("The AI runner answered with status {0}.").format(response.status_code)
+            _("The AI runner answered with status {0}.").format(response.status_code),
+            exc=RunnerRejected if response.status_code in REJECTED_STATUSES else frappe.ValidationError,
         )
     try:
         result = response.json()

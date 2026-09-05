@@ -27,6 +27,8 @@ own job takes the same lock and runs the same chain — so whichever is picked
 up first does the work once, and the other finds it done.
 """
 
+import hashlib
+
 import frappe
 from frappe.utils import strip_html
 
@@ -357,6 +359,120 @@ def retriage_for_message(message: str) -> dict:
         source_message=message,
     )
     return done
+
+
+# ---------------------------------------------------------------------------
+# Wave 20 (FILE-02): a file that lands after the triage
+# ---------------------------------------------------------------------------
+
+TICKET_FILE = "HD Ticket File"
+# The inventory's rows a triage is about. "Övrigt" is the signature image and
+# the tracking pixel; a set that changes only in those is the same set.
+RELEVANT_FILES = ("Original", "Underlag")
+
+
+def _relevant_file_names(ticket_id: str) -> list[str]:
+    """The names of the files on the ticket the triage should have looked at."""
+    if not frappe.db.table_exists(TICKET_FILE):
+        return []
+    return sorted(
+        frappe.get_all(
+            TICKET_FILE,
+            filters={"ticket": ticket_id, "relevance": ("in", RELEVANT_FILES)},
+            pluck="file_name",
+            limit_page_length=0,
+        )
+    )
+
+
+def _files_hash(names: list[str]) -> str:
+    return hashlib.sha1("\n".join(names).encode()).hexdigest()[:12]
+
+
+def files_retriage_key(ticket_id: str, names: list[str]) -> str:
+    """The key one file set on one ticket is triaged under: same set, same row."""
+    return f"ingress-retriage-files-{ticket_id}-{_files_hash(names)}"
+
+
+def enqueue_retriage_for_files(doc, method=None) -> None:
+    """HD Ticket File after_insert: the model looks again once the file is in.
+
+    The ingress runs when the ticket is inserted, before the mail's
+    attachments are; the inventory then classifies them and nobody reads them.
+    One job per ticket and file set, so a mail with five attachments queues
+    five identical ids and runs once, after the commit that made them rows.
+    """
+    ticket_id = getattr(doc, "ticket", None)
+    if not ticket_id or not ingress_enabled() or not ai_runner.is_runner_available():
+        return
+    names = _relevant_file_names(ticket_id)
+    if not names:
+        return
+    try:
+        frappe.enqueue(
+            "helpdesk.api.ai_ingress.retriage_for_files",
+            queue=QUEUE,
+            job_id=f"{JOB_PREFIX}-retriage-files-{ticket_id}-{_files_hash(names)}",
+            deduplicate=True,
+            ticket_id=ticket_id,
+            enqueue_after_commit=True,
+        )
+    except Exception:
+        frappe.log_error(
+            title="Helpdesk AI ingress",
+            message=f"could not queue file re-triage for {ticket_id}\n\n{frappe.get_traceback()}",
+        )
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def retriage_for_files(ticket_id: str) -> dict:
+    """Read the ticket again with the files as they now stand.
+
+    Keyed on the sorted relevant file names, so a new file set is one more
+    triage row beside the earlier ones and the same set replays. A verdict
+    made after the newest relevant file was inventoried already saw the set
+    — the ingress's own triage syncs the inventory before it reads — and is
+    not paid for twice.
+    """
+    done = {"ticket": ticket_id, "triaged": False, "reason": None}
+    if not frappe.db.exists("HD Ticket", ticket_id):
+        done["reason"] = "no such ticket"
+        return done
+    if not ai_runner.is_runner_available():
+        done["reason"] = "no runner"
+        return done
+    names = _relevant_file_names(ticket_id)
+    if not names:
+        done["reason"] = "no relevant files"
+        return done
+    previous = ai_triage.latest_triage(ticket_id)
+    if not previous:
+        done["reason"] = "the ticket has no triage to revisit"
+        return done
+    key = files_retriage_key(ticket_id, names)
+    if not frappe.db.exists("HD AI Triage Result", {"idempotency_key": key}):
+        newest = frappe.get_all(
+            TICKET_FILE,
+            filters={"ticket": ticket_id, "relevance": ("in", RELEVANT_FILES)},
+            fields=["max(creation) as creation"],
+        )
+        newest_file = newest[0].creation if newest else None
+        seen_by = frappe.db.get_value("HD AI Triage Result", previous, "creation")
+        if newest_file and seen_by and seen_by >= newest_file:
+            done["reason"] = "the latest triage already saw these files"
+            return done
+    try:
+        ai_triage.triage_ticket(ticket_id=ticket_id, idempotency_key=key, previous=previous)
+        done["triaged"] = True
+    except Exception:
+        done["reason"] = "the provider did not answer"
+        frappe.log_error(
+            title="Helpdesk AI ingress",
+            message=f"file re-triage failed for {ticket_id}\n\n{frappe.get_traceback()}",
+        )
+    return done
+
 
 
 def run_ingress(ticket_id: str, wait: int = LOCK_WAIT_SECONDS) -> dict:

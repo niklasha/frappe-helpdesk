@@ -108,6 +108,11 @@ doc_events = {
         # finished and was half readable.
         "after_insert": "helpdesk.api.ai_ingress.enqueue_for_message",
     },
+    "HD Ticket File": {
+        # Wave 20 (FILE-02): the mail's attachments land after the ticket's
+        # own triage ran; a row in the inventory queues one more reading.
+        "after_insert": "helpdesk.api.ai_ingress.enqueue_retriage_for_files",
+    },
     "Assignment Rule": {
         "on_trash": "helpdesk.extends.assignment_rule.on_assignment_rule_trash",
         "validate": "helpdesk.extends.assignment_rule.on_assignment_rule_validate",
