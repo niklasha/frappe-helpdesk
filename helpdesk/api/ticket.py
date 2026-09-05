@@ -172,3 +172,93 @@ def reply_and_set_status(
         ticket.save()
 
     return {"communication": communication, "status": status}
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def reply_translated(
+    ticket_id: str, translation_id: str, status: str | None = None
+) -> dict:
+    """Send a reviewed translation to the customer in the customer's language.
+
+    Wave 4 forbids sending an outbound translation nobody reviewed, and that
+    rule stays. This is the one door that reviews and sends in the same motion:
+    the agent reading the draft and pressing send *is* the review, so the audit
+    names them, and both marks land together — no row can end up sent but
+    unreviewed, or reviewed by nobody.
+
+    The Swedish the agent wrote stays on the row as `original_text`, so the
+    thread can still show what was meant beside what was said.
+    """
+    from helpdesk.api.translation import mark_translation_sent, review_translation
+
+    frappe.has_permission("HD Ticket", "write", doc=ticket_id, throw=True)
+
+    doc = frappe.get_doc("HD Message Translation", translation_id)
+    if doc.ticket != ticket_id:
+        frappe.throw(
+            _("Översättningen hör till ett annat ärende och kan inte skickas här."),
+            title=_("Fel ärende"),
+        )
+    if doc.direction != "Outbound":
+        frappe.throw(
+            _("Bara en översättning av ett svar kan skickas till kunden."),
+            title=_("Fel riktning"),
+        )
+    if doc.sent_on:
+        frappe.throw(
+            _("Översättningen är redan skickad till kunden."),
+            title=_("Redan skickad"),
+        )
+
+    message = (doc.translated_text or "").strip()
+    if not message:
+        frappe.throw(
+            _("Översättningen är tom och kan inte skickas."),
+            title=_("Tom översättning"),
+        )
+
+    # Check the status before anything is sent: a status the site has not
+    # defined must not cost the customer a message.
+    status = (status or "").strip()
+    if status and not frappe.db.exists("HD Ticket Status", status):
+        frappe.throw(
+            _("Statusen '{0}' finns inte. Välj en befintlig ärendestatus.").format(
+                status
+            ),
+            title=_("Okänd status"),
+        )
+
+    ticket = frappe.get_doc("HD Ticket", ticket_id)
+    ticket.reply_via_agent(message, to=ticket.raised_by)
+
+    communication = frappe.db.get_value(
+        "Communication",
+        {
+            "reference_doctype": "HD Ticket",
+            "reference_name": ticket_id,
+            "sent_or_received": "Sent",
+        },
+        "name",
+        order_by="creation desc",
+    )
+
+    # Through the Wave 4 endpoints, so the refusal they encode keeps guarding
+    # every other caller and the review carries the agent's name.
+    review_translation(translation_id)
+    row = mark_translation_sent(translation_id)
+
+    if status:
+        # save() rather than db.set_value so SLA and activity hooks see it
+        ticket.reload()
+        if ticket.status != status:
+            ticket.status = status
+            ticket.save()
+
+    return {
+        "communication": communication,
+        "translation": translation_id,
+        "reviewed_by": row.get("reviewed_by"),
+        "sent_on": row.get("sent_on"),
+        "status": status or ticket.status,
+    }
