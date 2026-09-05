@@ -336,14 +336,18 @@ def generate_completion_request(
     if stored:
         return frappe.get_doc("HD AI Reply Draft", stored).as_dict()
     extraction, missing = _missing_order_fields(extraction_id)
-    engine = ai_generation.engine_or_throw()
+    engines = ai_generation.engines_or_throw(ai_generation.COMPLETION_REQUEST)
     instructions, prompt_version = ai_generation._prompt(
         ai_generation.COMPLETION_REQUEST
     )
     body, response = ai_generation.generate_text(
-        engine, instructions, ", ".join(missing), COMPLETION_REQUEST_HINT
+        engines,
+        instructions,
+        ", ".join(missing),
+        COMPLETION_REQUEST_HINT,
+        call=ai_generation.COMPLETION_REQUEST,
     )
-    generation = ai_generation.provenance(response, prompt_version, engine)
+    generation = ai_generation.provenance(response, prompt_version)
     draft = record_reply_draft(
         ticket_id=extraction.ticket,
         body=body,

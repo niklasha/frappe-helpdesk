@@ -268,8 +268,8 @@ def engines_for(call: str | None = None) -> list:
     return ai_engine.engine_chain(call)
 
 
-def engine_or_throw() -> str:
-    """Return the engine to generate with, or refuse to generate at all.
+def engines_or_throw(call: str | None = None) -> list:
+    """Return the chain to ask for one call, or refuse to generate at all.
 
     Generation without a runner has no honest fallback: an endpoint that
     quietly recorded a made-up result would be indistinguishable from one the
@@ -277,10 +277,15 @@ def engine_or_throw() -> str:
     """
     if not ai_runner.is_runner_available():
         frappe.throw(_("No AI runner is configured."))
-    chain = ai_engine.engine_chain(None)
+    chain = ai_engine.engine_chain(call)
     if not chain:
         frappe.throw(_("No AI runner is configured: there is no default engine."))
-    return chain[0]
+    return chain
+
+
+def engine_or_throw() -> str:
+    """Return the single engine a caller that does not walk a chain should use."""
+    return engines_or_throw()[0]
 
 
 def ticket_text(ticket_id: str) -> str:
@@ -655,7 +660,13 @@ def usage_fields(response: dict, engine: str | None = None) -> dict:
     accounting or an engine nobody has priced is not free, only unknown. A
     count the runner did not send is 0 as well, since an Int column cannot
     hold "nobody counted".
+
+    The engine the response names is the engine that answered it, and it wins
+    over the one the caller asked for: with a chain the two differ exactly when
+    a fall-through happened, and the record must name the engine whose
+    allowance was actually spent.
     """
+    engine = response.get("engine") or engine
     usage = response.get("usage")
     if not isinstance(usage, dict):
         usage = None
@@ -736,17 +747,82 @@ def attribute(
     )
 
 
+FAILOVER_ACTION = "ai_engine_failover"
+
+
+def _named(engines: "list | str") -> list:
+    """Return a chain as a list of engine names, however the caller spelled it."""
+    if isinstance(engines, str):
+        engines = [engines]
+    return [name for name in (engines or []) if name]
+
+
+def _answered(engines: "list | str", ask, call: str | None = None) -> dict:
+    """Ask each engine in turn until one answers, and return its response.
+
+    Only a transport failure walks on. A rate limit, an upstream failure and a
+    runner that could not be reached all left the question unanswered, so the
+    next engine — a second user on the same subscription, with its own
+    allowance — may still answer it. Every other failure ends the chain where
+    it happened: a refusal means the request was wrong and will be just as
+    wrong on the next engine, and an answer that was rejected means the model
+    already spoke. Asking again would only spend the second allowance.
+
+    The response carries the name of the engine that produced it, so the
+    provenance a caller records cannot name an engine that never answered.
+    """
+    names = _named(engines)
+    if not names:
+        frappe.throw(_("No AI runner is configured: there is no default engine."))
+    failures: list = []
+    unreachable = None
+    for name in names:
+        try:
+            response = ask(name)
+        except ai_runner.RunnerUnavailable as exception:
+            failures.append((name, str(exception)))
+            unreachable = exception
+            continue
+        response["engine"] = name
+        for failed, reason in failures:
+            governance.log_automation_event(
+                action=FAILOVER_ACTION,
+                details={
+                    "call": call,
+                    "failed_engine": failed,
+                    "reason": reason,
+                    "answered_by": name,
+                },
+            )
+        return response
+    # Every engine was out of reach. The last failure is raised as it was, so
+    # a site with one engine reads in the log exactly as it did before.
+    raise unreachable
+
+
 def generate_text(
-    engine: str, instructions: str, content: str, task_hint: str
+    engines: "list | str",
+    instructions: str,
+    content: str,
+    task_hint: str,
+    call: str | None = None,
 ) -> tuple[str, dict]:
-    """Ask the engine for one piece of finished prose, with its provenance.
+    """Ask the chain for one piece of finished prose, with its provenance.
+
+    `engines` is the order to try, or a single engine name; the first one that
+    answers wins.
 
     An empty answer is a failed generation rather than an empty result: a blank
     message recorded as the model's own would reach a customer looking like
-    something somebody meant to write.
+    something somebody meant to write. It is the model having answered badly,
+    not an engine being unreachable, so the chain stops there.
     """
-    response = ai_runner.generate(
-        engine=engine, messages=_messages(instructions, task_hint, content)
+    response = _answered(
+        engines,
+        lambda engine: ai_runner.generate(
+            engine=engine, messages=_messages(instructions, task_hint, content)
+        ),
+        call,
     )
     text = (response.get("text") or "").strip()
     if not text:
@@ -755,14 +831,19 @@ def generate_text(
 
 
 def generate_json(
-    engine: str,
+    engines: "list | str",
     instructions: str,
     content: str,
     schema_hint: str,
     required_keys: tuple[str, ...] = (),
     image_parts: list[dict] | None = None,
+    call: str | None = None,
 ) -> tuple[dict, dict]:
-    """Ask the engine for one JSON object, and return it with its provenance.
+    """Ask the chain for one JSON object, and return it with its provenance.
+
+    `engines` is the order to try, or a single engine name; an engine that is
+    out of reach falls through to the next, an answer that is not the object
+    asked for does not.
 
     Nothing is salvaged from an answer that is not that object: an engine that
     replied with prose has not answered the question that was asked, and a
@@ -783,27 +864,30 @@ def generate_json(
     # the composed instructions do not already carry it.
     if JSON_ONLY.split(".")[0] not in instructions and JSON_ONLY.split(".")[0] not in schema_hint:
         schema_hint = f"{schema_hint}\n\n{JSON_ONLY}".strip()
-    try:
-        response = ai_runner.generate(
-            engine=engine,
-            messages=_messages(instructions, schema_hint, content, image_parts),
-        )
-    except ai_runner.RunnerRejected:
-        if not image_parts:
-            raise
-        # A runner from before Wave 20 does not take a content list. The
-        # pictures are dropped and the text goes alone, so a stale runner
-        # costs the model its look at the files rather than the whole triage.
-        frappe.log_error(
-            title="Helpdesk AI runner",
-            message=(
-                "the runner rejected a message with image parts; "
-                "retrying with text only\n\n" + frappe.get_traceback()
-            ),
-        )
-        response = ai_runner.generate(
-            engine=engine, messages=_messages(instructions, schema_hint, content)
-        )
+    def ask(engine: str) -> dict:
+        try:
+            return ai_runner.generate(
+                engine=engine,
+                messages=_messages(instructions, schema_hint, content, image_parts),
+            )
+        except ai_runner.RunnerRejected:
+            if not image_parts:
+                raise
+            # A runner from before Wave 20 does not take a content list. The
+            # pictures are dropped and the text goes alone, so a stale runner
+            # costs the model its look at the files rather than the whole triage.
+            frappe.log_error(
+                title="Helpdesk AI runner",
+                message=(
+                    "the runner rejected a message with image parts; "
+                    "retrying with text only\n\n" + frappe.get_traceback()
+                ),
+            )
+            return ai_runner.generate(
+                engine=engine, messages=_messages(instructions, schema_hint, content)
+            )
+
+    response = _answered(engines, ask, call)
     try:
         answer = json.loads(_unfenced(response.get("text")))
     except ValueError:
