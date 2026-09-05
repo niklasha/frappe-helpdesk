@@ -5,6 +5,7 @@
        tickets, and the originals attached to its earlier tickets — so an
        agent never asks a key account for a product or a logo it already sent. -->
   <div class="flex flex-1 flex-col overflow-y-auto px-5 py-4 text-sm">
+    <h2 class="mb-3 text-lg font-semibold text-ink-gray-9">{{ __("Kund") }}</h2>
     <div v-if="profile.loading && !profile.data" class="text-ink-gray-5">
       {{ __("Hämtar kund…") }}
     </div>
@@ -26,6 +27,7 @@
             :label="__('Nyckelkund')"
           />
           <Button
+            v-if="canEdit"
             class="ml-auto"
             size="sm"
             variant="subtle"
@@ -245,6 +247,21 @@ const recentTickets = computed<TicketRow[]>(
   () => profile.data?.recent_tickets || []
 );
 const originals = computed<OriginalRow[]>(() => profile.data?.originals || []);
+
+// Agents read HD Customer but may not write it; the button is offered only
+// to a session the server says may save, so a click never ends in a 403.
+const canWrite = createResource({
+  url: "frappe.client.has_permission",
+  makeParams: () => ({
+    doctype: "HD Customer",
+    docname: customer.value?.name || customer.value?.customer_name,
+    perm_type: "write",
+  }),
+});
+watch(customer, (c) => {
+  if (c) canWrite.fetch();
+});
+const canEdit = computed(() => Boolean(canWrite.data?.has_permission));
 
 const showEdit = ref(false);
 const form = reactive({
