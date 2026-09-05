@@ -280,6 +280,62 @@ def ticket_text(ticket_id: str) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
+# The profile fields a customer row carries (Wave 19, CUST-01), in the order
+# the model is shown them. Read as a list so a column the sibling slice has
+# not yet added fails loudly here, not silently as an empty profile.
+CUSTOMER_PROFILE_FIELDS = (
+    "customer_name",
+    "key_account",
+    "default_product",
+    "proof_required",
+    "delivery_default",
+    "desk_notes",
+)
+
+
+def customer_context(ticket_id: str) -> str:
+    """The resolved customer's profile, as the data block a model reads.
+
+    The order coordinator's rule about the key accounts — they order Stark
+    "till 99 %" and never write it — used to live as five names in the prompt
+    text, and went stale the day a sixth signed. The profile on the customer
+    row is the rule as data: who is writing, that it is a key account, what it
+    orders when it does not say. Empty when the ticket has no customer, so an
+    unknown sender is shown to the model exactly as before.
+    """
+    customer = frappe.db.get_value("HD Ticket", ticket_id, "customer")
+    if not customer:
+        return ""
+    profile = frappe.db.get_value(
+        "HD Customer", customer, list(CUSTOMER_PROFILE_FIELDS), as_dict=True
+    )
+    if not profile:
+        return ""
+    yes_no = lambda value: "ja" if cint(value) else "nej"  # noqa: E731
+    lines = [
+        "Kundprofil:",
+        f"Kund: {profile.customer_name or customer}",
+        f"Nyckelkund (key account): {yes_no(profile.key_account)}",
+    ]
+    if profile.default_product:
+        lines.append(
+            f"Standardprodukt: {profile.default_product} "
+            "(beställer denna när ingen produkt anges)"
+        )
+    lines.append(f"Korrektur krävs: {yes_no(profile.proof_required)}")
+    if profile.delivery_default:
+        lines.append(f"Standardleverans: {profile.delivery_default}")
+    if profile.desk_notes:
+        lines.append(f"Anteckningar: {profile.desk_notes}")
+    return "\n".join(lines)
+
+
+def with_customer_context(ticket_id: str, content: str) -> str:
+    """`content` with the customer's profile appended, when there is one."""
+    context = customer_context(ticket_id)
+    return f"{content}\n\n{context}" if context else content
+
+
 def _messages(instructions: str, schema_hint: str, content: str) -> list:
     """Show the engine its instructions and the shape of the answer, then the material."""
     return [

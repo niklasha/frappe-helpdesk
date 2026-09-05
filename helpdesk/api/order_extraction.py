@@ -80,11 +80,28 @@ def record_extraction(
             values[field] = ", ".join(str(item) for item in value if item not in (None, ""))
         elif isinstance(value, dict):
             values[field] = json.dumps(value, ensure_ascii=False)
+    corrections = {}
+    if not values.get("product"):
+        # A key account never writes its product (Wave 19, CUST-02): the
+        # customer's default stands in, marked as assumed so the row says
+        # where the value came from and the desk never asks for it.
+        default_product = _default_product(ticket_id)
+        if default_product:
+            values["product"] = default_product
+            corrections["product"] = "assumed from customer profile"
     missing = [field for field in required if not values.get(field)]
     complete = not missing
-    doc = frappe.get_doc({"doctype": "HD Order Extraction", "ticket": ticket_id, "idempotency_key": idempotency_key, "required_fields": json.dumps(required), "missing_fields": json.dumps(missing), "complete": complete, "status": "Ready to create order" if complete else "Needs Review", "ready_for_connector": complete, "corrections": {}, "corrected_on": None, **values})
+    doc = frappe.get_doc({"doctype": "HD Order Extraction", "ticket": ticket_id, "idempotency_key": idempotency_key, "required_fields": json.dumps(required), "missing_fields": json.dumps(missing), "complete": complete, "status": "Ready to create order" if complete else "Needs Review", "ready_for_connector": complete, "corrections": corrections, "corrected_on": None, **values})
     doc.insert(ignore_permissions=True)
     return doc.as_dict()
+
+
+def _default_product(ticket_id: str) -> str | None:
+    """The resolved customer's default product, or nothing."""
+    customer = frappe.db.get_value("HD Ticket", ticket_id, "customer")
+    if not customer:
+        return None
+    return frappe.db.get_value("HD Customer", customer, "default_product") or None
 
 
 @frappe.whitelist(methods=["POST"])
@@ -147,11 +164,12 @@ def _extraction_text(ticket_id: str, source_message: str | None) -> str:
     becoming sixty.
     """
     text = ai_generation.ticket_text(ticket_id)
-    if not source_message:
-        return text
-    content = frappe.db.get_value("Communication", source_message, "content")
-    reply = strip_html(content or "").strip()
-    return f"{text}\n\nKundens svar:\n{reply}" if reply else text
+    if source_message:
+        content = frappe.db.get_value("Communication", source_message, "content")
+        reply = strip_html(content or "").strip()
+        if reply:
+            text = f"{text}\n\nKundens svar:\n{reply}"
+    return ai_generation.with_customer_context(ticket_id, text)
 
 
 @frappe.whitelist(methods=["GET", "POST"])
