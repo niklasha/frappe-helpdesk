@@ -92,7 +92,7 @@ user_invitation = {
 AI_COST_EVENTS = {
     "after_insert": "helpdesk.api.ai_cost.on_change",
     "on_update": "helpdesk.api.ai_cost.on_change",
-    "on_trash": "helpdesk.api.ai_cost.on_change",
+    "after_delete": "helpdesk.api.ai_cost.on_change",
 }
 
 doc_events = {

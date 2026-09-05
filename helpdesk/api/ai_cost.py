@@ -2,22 +2,24 @@
 
 Every AI record (triage, translation, order extraction, reply draft) carries
 its own `ai_cost` since Wave 17b, priced from the engine's tariff and the
-tokens the runner reported. A coordinator asking "what did this ticket cost
-us" should not have to open four lists and add them up, so HD Ticket carries
-the sum.
+tokens the runner reported, and a `cost_known` flag that says whether that
+number is one the desk can vouch for. A coordinator asking "what did this
+ticket cost us" should not have to open four lists and add them up, so HD
+Ticket carries the sum.
 
 It is a roll-up, not a counter: recomputed from the rows every time one of
 them is inserted, changed or deleted, so deleting a record takes its cost
-back out and a re-priced row is reflected. Rows without a cost (an adopted
-translation, an unpriced engine, a runner that reported no usage) contribute
-nothing rather than zero, and a ticket with no priced row keeps NULL — the
-desk then shows no number instead of a misleading $0.
+back out and a re-priced row is reflected. Only rows with `cost_known` set
+count: an adopted translation, an unpriced engine or a runner that reported
+no usage holds a 0 the database forced on it, not a price, and is left out.
+A ticket with no priced row sums to 0.
 """
 
 import frappe
+from frappe.utils import flt
 
-# The doctypes that carry `ai_cost` and a `ticket` link. Kept here so the
-# hooks, the patch and the sum agree on one list.
+# The doctypes that carry `ai_cost`, `cost_known` and a `ticket` link. Kept
+# here so the hooks, the patch and the sum agree on one list.
 AI_DOCTYPES = (
     "HD AI Triage Result",
     "HD Message Translation",
@@ -26,30 +28,21 @@ AI_DOCTYPES = (
 )
 
 
-def total_for(ticket_id: str, exclude: tuple[str, str] | None = None) -> float | None:
-    """Sum of `ai_cost` over the ticket's AI rows, None when no row has one.
-
-    `exclude` names one (doctype, name) to leave out: the row being deleted,
-    which is still in the table while its on_trash hook runs.
-    """
+def total_for(ticket_id: str) -> float:
+    """Sum of `ai_cost` over the ticket's AI rows whose cost is known."""
     total = 0.0
-    priced = False
     for doctype in AI_DOCTYPES:
-        filters = {"ticket": ticket_id}
-        if exclude and exclude[0] == doctype:
-            filters["name"] = ["!=", exclude[1]]
-        for row in frappe.db.get_all(doctype, filters=filters, fields=["ai_cost"]):
-            cost = row.get("ai_cost")
-            if cost in (None, ""):
-                continue
-            total += float(cost)
-            priced = True
-    return total if priced else None
+        rows = frappe.db.get_all(
+            doctype,
+            filters={"ticket": ticket_id, "cost_known": 1},
+            fields=["sum(ai_cost) as total"],
+        )
+        if rows:
+            total += flt(rows[0].get("total"))
+    return total
 
 
-def recompute(
-    ticket_id: str, exclude: tuple[str, str] | None = None
-) -> float | None:
+def recompute(ticket_id: str) -> float | None:
     """Write the ticket's roll-up and return it.
 
     A direct column write: no save, no hooks, no `modified` bump. The ticket
@@ -59,7 +52,7 @@ def recompute(
     """
     if not ticket_id or not frappe.db.exists("HD Ticket", ticket_id):
         return None
-    total = total_for(ticket_id, exclude)
+    total = total_for(ticket_id)
     frappe.db.set_value(
         "HD Ticket", ticket_id, "ai_cost", total, update_modified=False
     )
@@ -67,13 +60,13 @@ def recompute(
 
 
 def on_change(doc, method: str | None = None) -> None:
-    """doc_events target for the AI doctypes: after_insert, on_update, on_trash.
+    """doc_events target for the AI doctypes: after_insert, on_update, after_delete.
 
-    On trash the row is still in the table when the hook runs, so it is left
-    out of the sum explicitly; a deleted record takes its cost back out.
+    Every event recomputes from the table as it stands. The delete side is
+    hooked after the row is gone (after_delete, not on_trash) so the same
+    plain sum serves all three and nothing has to be excluded by hand.
     """
     ticket_id = getattr(doc, "ticket", None)
     if not ticket_id:
         return
-    exclude = (doc.doctype, doc.name) if method == "on_trash" else None
-    recompute(ticket_id, exclude)
+    recompute(ticket_id)

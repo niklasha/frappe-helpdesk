@@ -9,7 +9,7 @@
       <TicketAITriage />
       <!-- Wave 17b: what the ticket has cost in AI calls, summed over its
            records by helpdesk.api.ai_cost. Only once something was bought;
-           a ticket with no priced record shows no number rather than $0. -->
+           a ticket with no priced record sums to 0 and shows no number. -->
       <div
         v-if="aiCost !== null"
         class="flex items-center justify-between text-sm"
@@ -213,7 +213,7 @@ const aiCost = computed(() => {
   const raw = ticket.value?.doc?.ai_cost;
   if (raw === null || raw === undefined || raw === "") return null;
   const value = Number(raw);
-  if (Number.isNaN(value)) return null;
+  if (Number.isNaN(value) || value === 0) return null;
   return "$" + value.toFixed(4);
 });
 
