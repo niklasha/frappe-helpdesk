@@ -143,8 +143,19 @@ def record_translation(
     prompt_version: str | int | None = None,
     idempotency_key: str | None = None,
     adopted_from: str | None = None,
+    engine: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cache_read_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
+    ai_cost: float | None = None,
 ) -> dict:
     """Persist a translation next to its original text, replayable by key.
+
+    The engine, the token counts and the cost (Wave 17b) say what this row
+    bought. An adopted row names none of them: it wears another row's words
+    and paid for nothing, so its cost stays empty and adds nothing to the
+    ticket's sum.
 
     `message` names the Communication these words arrived in. Without it a
     translation can only be shown beside the ticket rather than beside the
@@ -172,6 +183,14 @@ def record_translation(
         )
         if existing:
             return frappe.get_doc("HD Message Translation", existing).as_dict()
+    costs = {
+        "engine": engine,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_write_tokens": cache_write_tokens,
+        "ai_cost": ai_cost,
+    }
     doc = frappe.get_doc(
         {
             "doctype": "HD Message Translation",
@@ -187,9 +206,11 @@ def record_translation(
             "prompt_version": prompt_version,
             "idempotency_key": idempotency_key,
             "adopted_from": adopted_from,
+            **costs,
         }
     )
     doc.insert(ignore_permissions=True)
+    ai_generation.keep_empty_counts("HD Message Translation", doc.name, costs)
     return doc.as_dict()
 
 
@@ -225,6 +246,12 @@ def translate_inbound(
     model_version: str | None = None,
     prompt_version: str | int | None = None,
     idempotency_key: str | None = None,
+    engine: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cache_read_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
+    ai_cost: float | None = None,
 ) -> dict:
     """Record the translation of a message a customer sent us.
 
@@ -243,6 +270,12 @@ def translate_inbound(
         model_version=model_version,
         prompt_version=prompt_version,
         idempotency_key=idempotency_key,
+        engine=engine,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+        ai_cost=ai_cost,
     )
 
 
@@ -288,7 +321,7 @@ def _detected_translation(original_text, target_language):
         _inbound_hint(target_language),
         required_keys=("language",),
     )
-    return answer, ai_generation.provenance(response, prompt_version)
+    return answer, ai_generation.provenance(response, prompt_version, engine)
 
 
 def _generated_translation(original_text, source_language, target_language, prompt_name):
@@ -306,7 +339,7 @@ def _generated_translation(original_text, source_language, target_language, prom
         original_text,
         _translation_hint(source_language, target_language),
     )
-    return text, ai_generation.provenance(response, prompt_version)
+    return text, ai_generation.provenance(response, prompt_version, engine)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -371,9 +404,7 @@ def generate_inbound_translation(
         source_language=source_language,
         target_language=target_language,
         message=message,
-        provider=generation["provider"],
-        model_version=generation["model_version"],
-        prompt_version=generation["prompt_version"],
+        **generation,
         idempotency_key=idempotency_key,
     )
     ai_generation.attribute(
@@ -402,6 +433,12 @@ def translate_outbound(
     model_version: str | None = None,
     prompt_version: str | int | None = None,
     idempotency_key: str | None = None,
+    engine: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cache_read_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
+    ai_cost: float | None = None,
 ) -> dict:
     """Record an agent's Swedish reply translated into the customer's language."""
     return record_translation(
@@ -415,6 +452,12 @@ def translate_outbound(
         model_version=model_version,
         prompt_version=prompt_version,
         idempotency_key=idempotency_key,
+        engine=engine,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+        ai_cost=ai_cost,
     )
 
 
@@ -459,9 +502,7 @@ def generate_outbound_translation(
         original_text=original_text,
         translated_text=text,
         target_language=target_language,
-        provider=generation["provider"],
-        model_version=generation["model_version"],
-        prompt_version=generation["prompt_version"],
+        **generation,
         idempotency_key=idempotency_key,
     )
     ai_generation.attribute(
@@ -514,6 +555,12 @@ TRANSLATION_VIEW_FIELDS = (
     "provider",
     "model_version",
     "prompt_version",
+    # What the call used and what it charged (Wave 17b). An adopted row
+    # shows nothing here: it bought nothing.
+    "engine",
+    "input_tokens",
+    "output_tokens",
+    "ai_cost",
     # Whose translation this row wears, when it bought none of its own. The
     # band uses it to stay silent about words the thread already shows.
     "adopted_from",

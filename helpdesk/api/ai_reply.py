@@ -74,6 +74,7 @@ def _generated_reply(engine, knowledge, question, prompt_name):
         "provider": response.get("provider"),
         "model_version": response.get("model"),
         "prompt_version": prompt_version,
+        **ai_generation.usage_fields(response, engine),
     }
 
 
@@ -84,6 +85,7 @@ def _extracted_reply(knowledge):
         "provider": None,
         "model_version": None,
         "prompt_version": None,
+        **dict.fromkeys(ai_generation.COST_FIELDS),
     }
 
 
@@ -117,6 +119,12 @@ def record_reply_draft(
     model_version: str | None = None,
     prompt_version: str | int | None = None,
     idempotency_key: str | None = None,
+    engine: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cache_read_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
+    ai_cost: float | None = None,
 ) -> dict:
     """Persist a proposed customer reply for human review, replayable by key."""
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
@@ -128,6 +136,14 @@ def record_reply_draft(
             return frappe.get_doc("HD AI Reply Draft", existing).as_dict()
     if isinstance(sources, str):
         sources = json.loads(sources or "[]")
+    costs = {
+        "engine": engine,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_write_tokens": cache_write_tokens,
+        "ai_cost": ai_cost,
+    }
     doc = frappe.get_doc(
         {
             "doctype": "HD AI Reply Draft",
@@ -144,10 +160,12 @@ def record_reply_draft(
             "model_version": model_version,
             "prompt_version": prompt_version,
             "idempotency_key": idempotency_key,
+            **costs,
         }
     )
     _apply_auto_reply_policy(doc)
     doc.insert(ignore_permissions=True)
+    ai_generation.keep_empty_counts("HD AI Reply Draft", doc.name, costs)
     return doc.as_dict()
 
 
@@ -194,6 +212,7 @@ def draft_knowledge_reply(
         model_version=reply["model_version"],
         prompt_version=reply["prompt_version"],
         idempotency_key=idempotency_key,
+        **{field: reply.get(field) for field in ai_generation.COST_FIELDS},
     )
     if reply["provider"]:
         ai_generation.attribute(
@@ -323,7 +342,7 @@ def generate_completion_request(
     body, response = ai_generation.generate_text(
         engine, instructions, ", ".join(missing), COMPLETION_REQUEST_HINT
     )
-    generation = ai_generation.provenance(response, prompt_version)
+    generation = ai_generation.provenance(response, prompt_version, engine)
     draft = record_reply_draft(
         ticket_id=extraction.ticket,
         body=body,
