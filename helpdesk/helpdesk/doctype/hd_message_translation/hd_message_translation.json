@@ -19,7 +19,8 @@
   "provider",
   "model_version",
   "prompt_version",
-  "idempotency_key"
+  "idempotency_key",
+  "adopted_from"
  ],
  "fields": [
   {
@@ -104,10 +105,17 @@
    "fieldtype": "Data",
    "label": "Idempotency Key",
    "unique": 1
+  },
+  {
+   "fieldname": "adopted_from",
+   "fieldtype": "Link",
+   "label": "Adopted From",
+   "options": "HD Message Translation",
+   "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-09-01 20:00:00.000000",
+ "modified": "2026-09-05 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Helpdesk",
  "name": "HD Message Translation",

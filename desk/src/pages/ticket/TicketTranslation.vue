@@ -75,14 +75,17 @@ watch(
 // message, so showing it here as well would put the same words on the screen
 // twice. What is left for this band is the case the thread cannot cover — a
 // ticket raised through the portal, whose description arrived as a field rather
-// than as an email. When a ticket was opened by email its description
-// translation is adopted by the first message, and this band correctly falls
-// silent.
-const inbound = computed(() =>
-  (translations.data || []).find(
-    (row) => row.direction === "Inbound" && !row.message
-  )
-);
+// than as an email. When a ticket was opened by email the first message wears
+// the description's translation through a row of its own that names it
+// (`adopted_from`, Wave 17); the ticket's row stays the one that was paid for,
+// so the band has to look past it, and correctly falls silent.
+const inbound = computed(() => {
+  const rows = translations.data || [];
+  const worn = new Set(rows.map((row) => row.adopted_from).filter(Boolean));
+  return rows.find(
+    (row) => row.direction === "Inbound" && !row.message && !worn.has(row.name)
+  );
+});
 
 function languageName(code: string): string {
   const found = (languages.data || []).find((row) => row.language_code === code);
