@@ -89,6 +89,12 @@ user_invitation = {
     "extra_invite_params": ["customer", "contact"],
 }
 
+AI_COST_EVENTS = {
+    "after_insert": "helpdesk.api.ai_cost.on_change",
+    "on_update": "helpdesk.api.ai_cost.on_change",
+    "on_trash": "helpdesk.api.ai_cost.on_change",
+}
+
 doc_events = {
     "HD Ticket": {
         # Queues one job; never calls a model here. A model call in
@@ -128,6 +134,12 @@ doc_events = {
     "Notification Log": {
         "before_insert": "helpdesk.extends.notification_log.before_insert",
     },
+    # Wave 17b: the ticket carries the sum of what its AI records cost.
+    # Recomputed on every change so a deleted record takes its cost back out.
+    "HD AI Triage Result": AI_COST_EVENTS,
+    "HD Message Translation": AI_COST_EVENTS,
+    "HD Order Extraction": AI_COST_EVENTS,
+    "HD AI Reply Draft": AI_COST_EVENTS,
 }
 
 # For List View
