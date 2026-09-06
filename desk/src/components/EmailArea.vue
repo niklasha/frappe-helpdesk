@@ -34,8 +34,27 @@
 
       <div class="flex gap-2 items-center">
         <div class="gap-0.5 flex items-center">
+          <!-- QUEUE-02: the demo runs with the outgoing queue suspended, so a
+               composed mail can sit unsent for days. Where the thread shows the
+               delivery status it says so, and a message the queue never saw is
+               left exactly as it was. -->
+          <Tooltip
+            v-if="isHeld && !ticket?.doc?.via_customer_portal"
+            :text="
+              __(
+                'Meddelandet är skrivet och ligger i utskickskön. Det skickas för hand från Frappe-desken.'
+              )
+            "
+          >
+            <Badge
+              :label="__('Väntar på utskick')"
+              variant="subtle"
+              theme="orange"
+              class="me-1.5"
+            />
+          </Tooltip>
           <Badge
-            v-if="status.label && !ticket?.doc?.via_customer_portal"
+            v-else-if="status.label && !ticket?.doc?.via_customer_portal"
             :label="__(status.label)"
             variant="subtle"
             :theme="status.color"
@@ -168,6 +187,7 @@
 <script setup lang="ts">
 import { AttachmentItem } from "@/components";
 import { useScreenSize } from "@/composables/screen";
+import { useTicketDelivery } from "@/composables/useTicketDelivery";
 import { useTicketTranslations } from "@/composables/useTicketTranslations";
 import { useAuthStore } from "@/stores/auth";
 import { TicketSymbol } from "@/types";
@@ -221,6 +241,11 @@ const outboundTranslation = computed(() => forOutboundMessage(name));
 const translation = computed(
   () => inboundTranslation.value ?? outboundTranslation.value
 );
+const { forMessage: deliveryForMessage } = useTicketDelivery(
+  computed(() => ticket.value?.doc?.name)
+);
+const isHeld = computed(() => Boolean(deliveryForMessage(name)?.held));
+
 const showOriginal = ref(false);
 
 const auth = storeToRefs(useAuthStore());
