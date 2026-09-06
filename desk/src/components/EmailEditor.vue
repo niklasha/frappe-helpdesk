@@ -158,6 +158,33 @@
           </div>
         </div>
 
+        <!-- What the AI suggestion rests on, under the text it composed. Shown
+             only when there is something to show: a completion request rests on
+             the order and not on the library, and an empty heading would read
+             as a claim of grounding nobody made. -->
+        <div
+          v-if="replySources.length"
+          class="mx-5 my-2 text-p-xs text-ink-gray-4"
+        >
+          {{ __("Svaret bygger på") }}
+          <template
+            v-for="(source, index) in replySources"
+            :key="source.article"
+          >
+            <span v-if="index">, </span>
+            <router-link
+              class="underline hover:text-ink-gray-6"
+              target="_blank"
+              :to="{ name: 'Article', params: { articleId: source.article } }"
+              >{{ source.title }}</router-link
+            >
+            <!-- The article moved after the draft was written, so the agent has
+                 to re-read it before approving. -->
+            <span v-if="source.stale">
+              ({{ __("ändrad sedan utkastet skrevs") }})</span
+            >
+          </template>
+        </div>
         <!-- Attachments -->
         <AttachmentList
           class="px-5 my-2"
@@ -326,6 +353,7 @@ import {
   FileUploader,
   LoadingIndicator,
   Tooltip,
+  call,
   createResource,
   toast,
 } from "frappe-ui";
@@ -602,10 +630,41 @@ const resolveOptions = computed(() => {
  * for a half-stated order, or a knowledge reply) and put it in the editor
  * above whatever the agent has written. Nothing is sent by this button.
  */
+type ReplySource = {
+  article: string;
+  title: string;
+  stale?: boolean;
+};
+
+/** The articles the suggestion in the editor rests on, empty until one arrives. */
+const replySources = ref<ReplySource[]>([]);
+
+/**
+ * Ask for the staleness of the cited articles, which only the server can know:
+ * it compares the version the draft read with the one approved now. Failing
+ * this leaves the titles standing without a warning rather than hiding them.
+ */
+function markStaleSources(draftId: string) {
+  call("helpdesk.api.ai_reply.get_reply_sources", { draft_id: draftId })
+    .then((resolved: ReplySource[]) => {
+      if (Array.isArray(resolved) && resolved.length) {
+        replySources.value = resolved;
+      }
+    })
+    .catch(() => {});
+}
+
 const suggestReply = createResource({
   url: "helpdesk.api.ai_reply.suggest_reply",
   makeParams: () => ({ ticket_id: props.ticketId }),
-  onSuccess: (draft: { body?: string | null; reason?: string }) => {
+  onSuccess: (draft: {
+    name?: string;
+    body?: string | null;
+    reason?: string;
+    sources?: ReplySource[];
+  }) => {
+    replySources.value = Array.isArray(draft?.sources) ? draft.sources : [];
+    if (draft?.name && replySources.value.length) markStaleSources(draft.name);
     if (!draft?.body) {
       toast.warning(draft?.reason || __("Inget AI-förslag finns för det här ärendet."));
       return;
@@ -871,6 +930,7 @@ function resetState() {
 
 function handleDiscard() {
   outboundDraft.value = null;
+  replySources.value = [];
   attachments.value = [];
   savedReplyActionsRef.value?.clear();
   newEmail.value = getInitialContent();
