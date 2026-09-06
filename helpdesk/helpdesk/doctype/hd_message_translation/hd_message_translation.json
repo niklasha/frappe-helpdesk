@@ -8,6 +8,7 @@
   "ticket",
   "message",
   "direction",
+  "sent_side",
   "source_language",
   "target_language",
   "original_text",
@@ -49,6 +50,14 @@
    "fieldtype": "Select",
    "label": "Direction",
    "options": "Inbound\nOutbound"
+  },
+  {
+   "default": "Translation",
+   "fieldname": "sent_side",
+   "fieldtype": "Select",
+   "label": "Sent Side",
+   "options": "Original\nTranslation",
+   "read_only": 1
   },
   {
    "fieldname": "source_language",
