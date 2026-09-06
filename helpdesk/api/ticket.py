@@ -300,11 +300,15 @@ def delivery_state(ticket_id: str) -> list[dict]:
     """
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
 
+    # Only real messages: the thread renders communication_type "Communication"
+    # and nothing else, so an unsent auto-acknowledgement must not produce a
+    # warning against a row nobody can see.
     messages = frappe.get_all(
         "Communication",
         filters={
             "reference_doctype": "HD Ticket",
             "reference_name": ticket_id,
+            "communication_type": "Communication",
             "sent_or_received": "Sent",
         },
         fields=["name"],
@@ -315,24 +319,45 @@ def delivery_state(ticket_id: str) -> list[dict]:
         return []
 
     # One query for the whole thread: a busy ticket must not cost a round trip
-    # per message. Newest row per message wins, because a retry supersedes the
-    # attempt it retries; ordered here rather than with max() in fields, which
-    # this bench refuses as an SQL function.
-    latest: dict[str, str] = {}
+    # per message. One Communication can own several Email Queue rows — Frappe
+    # splits a send per recipient when there are many — and those siblings are
+    # not retries of one another, so no single row may speak for the message.
+    # Every row is folded into one decided state: the worst one wins.
+    # frappe.get_all ignores permissions; the HD Ticket read check above is
+    # what authorises reading the queue rows here.
+    statuses: dict[str, set[str]] = {}
     for row in frappe.get_all(
         "Email Queue",
         filters={"communication": ["in", messages]},
         fields=["communication", "status"],
-        order_by="creation desc, modified desc",
     ):
-        latest.setdefault(row.communication, row.status)
+        statuses.setdefault(row.communication, set()).add(row.status)
 
-    held_states = ("Not Sent", "Partially Sent")
     return [
         {
             "message": name,
-            "status": latest.get(name),
-            "held": 1 if latest.get(name) in held_states else 0,
+            "status": _decide_queue_status(statuses.get(name)),
+            # Held means "waiting for a human to send it": only "Not Sent".
+            # "Partially Sent" already reached someone, and telling the agent
+            # to hand-send it again would double the mail; "Error" and
+            # "Expired" are not waiting either, but the status names them so
+            # the thread does not render them as delivered.
+            "held": 1 if "Not Sent" in statuses.get(name, ()) else 0,
         }
         for name in messages
     ]
+
+
+# Precedence when one message owns several queue rows: any row still unsent
+# outranks every other, then the failures, then the partial and in-flight
+# states. Only a message whose every row went out is "Sent".
+_QUEUE_STATUS_PRECEDENCE = ("Not Sent", "Error", "Expired", "Partially Sent", "Sending")
+
+
+def _decide_queue_status(found: set[str] | None) -> str | None:
+    if not found:
+        return None
+    for status in _QUEUE_STATUS_PRECEDENCE:
+        if status in found:
+            return status
+    return "Sent"
