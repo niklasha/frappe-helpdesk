@@ -4,7 +4,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, now_datetime, strip_html
 
-from helpdesk.api import ai_generation, ai_runner
+from helpdesk.api import ai_generation, ai_runner, translation
 from helpdesk.api.knowledge_library import search_knowledge
 from helpdesk.utils import agent_only
 
@@ -79,18 +79,35 @@ def _approved_knowledge(articles):
     return sources, context
 
 
-def _reply_messages(instructions, knowledge, question):
+def _working_language_hint(working):
+    """Tell the engine to answer at home, whatever language the question came in.
+
+    The library it is grounded in is written in the working language, and the
+    reply is read and approved by an agent who works in it. An answer written
+    straight into the customer's language is the model's own unreviewed
+    translation of approved wording, which is exactly the thing the desk
+    promises never to send.
+    """
+    return (
+        f"Write the reply in the language with the code {working}, whatever "
+        "language the question is written in. Do not translate it for the "
+        "customer: an agent reads it in that language and a separate, reviewed "
+        "step translates it afterwards."
+    )
+
+
+def _reply_messages(instructions, knowledge, question, working=None):
     """Show the engine its instructions and the approved knowledge, then the question."""
+    system = f"{instructions}\n\nApproved knowledge:\n{knowledge}"
+    if working:
+        system = f"{system}\n\n{_working_language_hint(working)}"
     return [
-        {
-            "role": "system",
-            "content": f"{instructions}\n\nApproved knowledge:\n{knowledge}",
-        },
+        {"role": "system", "content": system},
         {"role": "user", "content": question},
     ]
 
 
-def _generated_reply(engines, knowledge, question, prompt_name):
+def _generated_reply(engines, knowledge, question, prompt_name, working=None):
     """Return the reply the chain wrote, together with its provenance.
 
     `engines` is the order to ask, resolved from the call's route the way every
@@ -105,7 +122,8 @@ def _generated_reply(engines, knowledge, question, prompt_name):
     response = ai_generation._answered(
         engines,
         lambda engine: ai_runner.generate(
-            engine=engine, messages=_reply_messages(instructions, knowledge, question)
+            engine=engine,
+            messages=_reply_messages(instructions, knowledge, question, working),
         ),
         prompt_name,
     )
@@ -130,6 +148,62 @@ def _extracted_reply(knowledge):
         "prompt_version": None,
         **dict.fromkeys(ai_generation.COST_FIELDS),
     }
+
+
+def _summed_costs(reply, generation):
+    """Add what the repair cost to what the draft cost, in the record's fields.
+
+    The repair is a second call on the same draft, so its tokens belong to the
+    same row: a ticket's roll-up that counted only the first call would show a
+    price nobody was charged. The cost is known only when both halves are, and
+    the engine named stays the one that wrote the answer.
+    """
+    costs = {field: reply.get(field) for field in ai_generation.COST_FIELDS}
+    for field in ai_generation.TOKEN_FIELDS:
+        costs[field] = cint(costs.get(field)) + cint(generation.get(field))
+    known = cint(reply.get("cost_known")) and cint(generation.get("cost_known"))
+    costs["ai_cost"] = flt(reply.get("ai_cost")) + flt(generation.get("ai_cost"))
+    costs["cost_known"] = 1 if known else 0
+    return costs
+
+
+def _brought_home(reply, knowledge, working):
+    """Return a draft in the working language, whatever language the engine wrote.
+
+    The instruction in the prompt is not a guarantee: a model that ignores it
+    hands the agent an answer they may not read, and one nobody has checked
+    against the Swedish articles it was drafted from. So the answer is verified
+    with the same detector the thread uses, and only a foreign answer costs the
+    repair — the ordinary case is one call, as before.
+
+    When even the repair comes back foreign, the approved wording itself is
+    what the agent gets. It is worse prose and it is the one text on the table
+    that is both in the working language and actually approved; an unreviewed
+    machine rendering of the library is precisely what this wave exists to
+    keep off the agent's screen.
+    """
+    detected = translation.detect_language_code(reply["body"])
+    if not detected or detected == working:
+        return reply
+
+    try:
+        text, generation = translation._generated_translation(
+            reply["body"], detected, working, ai_generation.TRANSLATION_OUTBOUND
+        )
+    except Exception:
+        text, generation = None, None
+        frappe.log_error(
+            title="Helpdesk AI reply",
+            message="could not bring a foreign draft home\n\n"
+            f"{frappe.get_traceback()}",
+        )
+
+    if text and translation.detect_language_code(text) == working:
+        return {**reply, "body": text, **_summed_costs(reply, generation)}
+
+    if knowledge:
+        return _extracted_reply(knowledge)
+    return reply
 
 
 def _apply_auto_reply_policy(doc):
@@ -299,8 +373,13 @@ def _draft_from_articles(
         if sources and ai_runner.is_runner_available()
         else None
     )
+    working = translation.get_working_language()
     reply = (
-        _generated_reply(engines, knowledge, question, prompt_name)
+        _brought_home(
+            _generated_reply(engines, knowledge, question, prompt_name, working),
+            knowledge,
+            working,
+        )
         if engines
         else _extracted_reply(knowledge)
     )

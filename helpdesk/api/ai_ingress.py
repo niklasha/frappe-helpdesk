@@ -32,7 +32,7 @@ import hashlib
 import frappe
 from frappe.utils import strip_html
 
-from helpdesk.api import ai_runner, ai_triage, order_extraction, translation
+from helpdesk.api import ai_generation, ai_runner, ai_triage, order_extraction, translation
 from helpdesk.helpdesk.doctype.hd_ticket_type.hd_ticket_type import classification_group
 from helpdesk.utils import agent_only, is_admin
 
@@ -135,6 +135,11 @@ def enqueue_for_message(doc, method=None) -> None:
     # language already, and outbound translation is a different endpoint with a
     # different target.
     if doc.sent_or_received != "Received":
+        # Wave 25b (LANG-09): a reply we sent in the customer's language leaves
+        # the house without the working language ever having seen it. That one
+        # gets an archive copy; nothing else here concerns an outgoing message.
+        if doc.sent_or_received == "Sent":
+            enqueue_archive_copy(doc)
         return
     if not ingress_enabled():
         return
@@ -881,3 +886,140 @@ def _ticket_text(ticket_id: str) -> str:
     from helpdesk.api import ai_generation
 
     return ai_generation.ticket_text(ticket_id)
+
+
+ARCHIVE_JOB_PREFIX = f"{JOB_PREFIX}-archive"
+
+
+def _archive_key(message: str) -> str:
+    """The idempotency key of one sent reply's working-language copy."""
+    return f"archive-copy-{message}"
+
+
+def enqueue_archive_copy(doc, method=None) -> None:
+    """Hook target: queue the working-language copy of a reply that just went out.
+
+    Not gated on the ingress switch. That switch governs what the desk spends on
+    *incoming* mail it was never asked to read; this is bookkeeping on a reply
+    the desk has already sent, and a thread half of whose outgoing messages have
+    no archive copy is worse than one with none — nobody can tell which is which.
+    The work itself is skipped for free whenever the reply is already at home
+    (`archive_sent_reply`), so an all-Swedish desk pays nothing either way.
+
+    Queued and silent for the same reasons as every other hook here: a model
+    call inside `after_insert` would make sending a reply wait on a provider,
+    and a failed copy must never cost the reply.
+    """
+    if doc.reference_doctype != "HD Ticket" or not doc.reference_name:
+        return
+    if doc.sent_or_received != "Sent":
+        return
+    # Only real correspondence. Automatic acknowledgements and system notes are
+    # not something an agent wrote and not something the archive owes a copy of.
+    if doc.communication_type != "Communication":
+        return
+    try:
+        frappe.enqueue(
+            "helpdesk.api.ai_ingress.archive_sent_reply",
+            queue=QUEUE,
+            job_id=f"{ARCHIVE_JOB_PREFIX}-{doc.name}",
+            deduplicate=True,
+            message=doc.name,
+            enqueue_after_commit=True,
+        )
+    except Exception:
+        frappe.log_error(
+            title="Helpdesk AI ingress",
+            message=f"could not queue an archive copy for {doc.name}\n\n"
+            f"{frappe.get_traceback()}",
+        )
+
+
+@frappe.whitelist(methods=["POST"])
+@agent_only
+def archive_sent_reply(message: str) -> dict:
+    """Keep a working-language copy of a reply an agent wrote in another language.
+
+    The reply has already gone; this cannot stop it and does not try. It is what
+    lets the next agent read what was promised, and lets anyone check it against
+    the library afterwards.
+
+    Three cases cost nothing at all. A reply already in the working language is
+    the ordinary one, and paying a model to turn Swedish into Swedish is the
+    sort of bill nobody notices until it arrives — so the detector, which is
+    local, decides before any engine is asked. A reply whose Communication
+    already carries an outbound translation was drafted at home and translated
+    through the reviewed door, so the house has its copy already. And a second
+    run finds the first run's row by its key and records nothing.
+
+    The row is deliberately unreviewed: nobody has read the machine's Swedish.
+    `sent_side` says `Original`, because here it is the original that reached
+    the customer — the opposite of every drafted reply.
+    """
+    done = {"message": message, "archived": False, "reason": None}
+    row = frappe.db.get_value(
+        "Communication",
+        message,
+        ["reference_doctype", "reference_name", "content", "sent_or_received"],
+        as_dict=True,
+    )
+    if not row or row.reference_doctype != "HD Ticket" or not row.reference_name:
+        done["reason"] = "not a ticket message"
+        return done
+    if row.sent_or_received != "Sent":
+        done["reason"] = "not a reply we sent"
+        return done
+
+    ticket_id = row.reference_name
+    text = strip_html(row.content or "").strip()
+    if not text:
+        done["reason"] = "nothing to copy"
+        return done
+
+    if frappe.db.exists(
+        "HD Message Translation", {"idempotency_key": _archive_key(message)}
+    ):
+        done.update(archived=True, reason="already copied")
+        return done
+    if frappe.db.exists(
+        "HD Message Translation", {"message": message, "direction": "Outbound"}
+    ):
+        done["reason"] = "the reply already has an outbound translation"
+        return done
+
+    working = translation.get_working_language()
+    detected = translation.detect_language_code(text)
+    if not detected or detected == working:
+        # Undetectable counts as at home: guessing at a language would file a
+        # Swedish reply as foreign and buy a copy of it in its own words.
+        done["reason"] = "already in the working language"
+        return done
+
+    try:
+        # The plain-text translation prompt, the same one a drafted reply is
+        # translated with; the inbound prompt answers JSON and detects the
+        # language, which is work already done here.
+        copy, generation = translation._generated_translation(
+            text, detected, working, ai_generation.TRANSLATION_OUTBOUND
+        )
+        result = translation.record_translation(
+            ticket_id=ticket_id,
+            original_text=text,
+            translated_text=copy,
+            source_language=detected,
+            target_language=working,
+            direction="Outbound",
+            message=message,
+            sent_side="Original",
+            idempotency_key=_archive_key(message),
+            **generation,
+        )
+        done.update(archived=True, translation=result.get("name"))
+    except Exception:
+        done["reason"] = "the provider did not answer"
+        frappe.log_error(
+            title="Helpdesk AI ingress",
+            message=f"could not archive the reply sent as {message}\n\n"
+            f"{frappe.get_traceback()}",
+        )
+    return done
