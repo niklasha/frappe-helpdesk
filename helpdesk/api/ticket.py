@@ -279,3 +279,60 @@ def reply_translated(
         "sent_on": row.get("sent_on"),
         "status": status or ticket.status,
     }
+
+
+@frappe.whitelist()
+@agent_only
+def delivery_state(ticket_id: str) -> list[dict]:
+    """Say, per outgoing message, whether the mail actually left.
+
+    The desk renders the Communication, and a Communication says nothing about
+    delivery: it exists as soon as the reply is composed. With Frappe's
+    outgoing queue suspended — the way the demo runs — a mail can sit in Email
+    Queue for days while the thread shows it as sent. This reads the queue
+    instead and reports both the raw status, so an administrator can chase the
+    row, and a decided `held`, so the thread needs no status vocabulary of its
+    own.
+
+    A message with no queue row is unknown, not waiting: older messages predate
+    the queue and cleanup jobs remove rows, so absence of evidence stays absent
+    (`held` 0, `status` None) rather than becoming a wall of false warnings.
+    """
+    frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
+
+    messages = frappe.get_all(
+        "Communication",
+        filters={
+            "reference_doctype": "HD Ticket",
+            "reference_name": ticket_id,
+            "sent_or_received": "Sent",
+        },
+        fields=["name"],
+        order_by="creation asc",
+        pluck="name",
+    )
+    if not messages:
+        return []
+
+    # One query for the whole thread: a busy ticket must not cost a round trip
+    # per message. Newest row per message wins, because a retry supersedes the
+    # attempt it retries; ordered here rather than with max() in fields, which
+    # this bench refuses as an SQL function.
+    latest: dict[str, str] = {}
+    for row in frappe.get_all(
+        "Email Queue",
+        filters={"communication": ["in", messages]},
+        fields=["communication", "status"],
+        order_by="creation desc, modified desc",
+    ):
+        latest.setdefault(row.communication, row.status)
+
+    held_states = ("Not Sent", "Partially Sent")
+    return [
+        {
+            "message": name,
+            "status": latest.get(name),
+            "held": 1 if latest.get(name) in held_states else 0,
+        }
+        for name in messages
+    ]
