@@ -5,8 +5,9 @@ export interface MessageTranslation {
   name: string;
   message: string | null;
   direction: string;
-  source_language: string;
-  target_language: string;
+  source_language: string | null;
+  target_language: string | null;
+  sent_on: string | null;
   original_text: string;
   translated_text: string;
   model_version: string | null;
@@ -59,12 +60,18 @@ export function useTicketTranslations(ticketId: ComputedRef<string | undefined>)
   // The desk's own replies, indexed the same way. Kept as a second index rather
   // than folded into the first: an inbound band shows the customer's words and
   // an outbound one the agent's, and a caller must not get one where it asked
-  // for the other.
+  // for the other. Only rows that actually went out belong here: a draft has
+  // message and translated_text too, but no sent_on.
   const byOutboundMessage = computed(() => {
     const rows: MessageTranslation[] = resource.value?.data ?? [];
     const index = new Map<string, MessageTranslation>();
     for (const row of rows) {
-      if (row.direction === "Outbound" && row.message && row.translated_text) {
+      if (
+        row.direction === "Outbound" &&
+        row.message &&
+        row.translated_text &&
+        row.sent_on
+      ) {
         index.set(row.message, row);
       }
     }
