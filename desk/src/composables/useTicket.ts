@@ -1,5 +1,7 @@
 import type { TicketAnalytics } from "@/components/ticket-agent/analytics/types";
 import { __ } from "@/translation";
+import { reloadTicketDelivery } from "@/composables/useTicketDelivery";
+import { reloadTicketTranslations } from "@/composables/useTicketTranslations";
 import type {
   DocumentResource,
   RecentSimilarTicket,
@@ -82,6 +84,10 @@ export function reloadTicket(ticketId: string) {
   ticketData.ticket.reload();
   ticketData.assignees.reload();
   ticketData.activities.reload();
+  // The thread's per-message state lives in two caches of its own; a reply
+  // just sent gets its band and its queue badge only if they refresh with it.
+  reloadTicketDelivery(ticketId);
+  reloadTicketTranslations(ticketId);
 }
 
 // Refresh a ticket that may have gone stale

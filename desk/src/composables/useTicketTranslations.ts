@@ -92,3 +92,13 @@ export function useTicketTranslations(ticketId: ComputedRef<string | undefined>)
 
   return { byMessage, byOutboundMessage, forMessage, forOutboundMessage, reload };
 }
+
+/**
+ * Refresh the translations for one ticket, if the thread has asked for them.
+ * Same reason as `reloadTicketDelivery`: the cache never reloads by itself, so
+ * a reply just sent on the customer's language gets its band only when the
+ * thread refreshes.
+ */
+export function reloadTicketTranslations(ticketId: string) {
+  perTicket.get(ticketId)?.reload();
+}
