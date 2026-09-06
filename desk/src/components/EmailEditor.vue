@@ -301,7 +301,11 @@
             <Button
               variant="solid"
               :disabled="isDisabled"
-              :loading="sendMail.loading || replyTranslated.loading"
+              :loading="
+                sendMail.loading ||
+                replyTranslated.loading ||
+                draftOutbound.loading
+              "
               :label="label"
               @click="
                 () => {
@@ -317,8 +321,12 @@
             >
               <Button
                 variant="subtle"
-                :disabled="isDisabled || sendAndSetStatus.loading"
-                :loading="sendAndSetStatus.loading"
+                :disabled="isDisabled"
+                :loading="
+                  sendAndSetStatus.loading ||
+                  (Boolean(pendingStatus) &&
+                    (draftOutbound.loading || replyTranslated.loading))
+                "
                 :label="__('Skicka & markera klar')"
               >
                 <template #suffix>
@@ -621,9 +629,24 @@ const sendAndSetStatus = createResource({
   makeParams: (status: string) => ({
     ticket_id: props.ticketId,
     status,
+    // The agent chose to send their own words (see `sendAsWritten`): the
+    // server's hold steps aside as the editor's did.
+    as_written: sendAsWritten() ? 1 : 0,
     ...replyArgs(),
   }),
-  onSuccess: onReplySent,
+  onSuccess: (result: any) => {
+    // The server held the reply and drafted the translation instead of
+    // sending. Adopt the draft exactly as if the editor had asked for it:
+    // the status the agent picked stays pending for the press that sends.
+    if (result?.held) {
+      adoptOutboundDraft(result, draftSourceText());
+      toast.info(
+        __("Svaret översätts till kundens språk. Läs det och skicka igen.")
+      );
+      return;
+    }
+    onReplySent();
+  },
 });
 
 const ticketStatusStore = useTicketStatusStore();
@@ -768,6 +791,8 @@ function languageName(code?: string | null): string {
 type OutboundDraft = {
   translation: string | null;
   original_text: string;
+  /** The editor as it was before the translation replaced it, for «Ångra». */
+  original_html: string;
   translated_text: string;
   source_language: string | null;
   target_language: string | null;
@@ -799,6 +824,11 @@ const needsOutboundTranslation = computed(
  */
 function draftSourceText(): string {
   if (outboundDraft.value) return outboundDraft.value.original_text;
+  return bodyWithoutSignature();
+}
+
+/** What the editor holds right now, as plain text, without the signature. */
+function bodyWithoutSignature(): string {
   const body = htmlToText(newEmail.value ?? "").trim();
   const signature = emailSignature.value
     ? htmlToText(emailSignature.value).trim()
@@ -826,43 +856,115 @@ const draftRequestText = ref("");
  * here. The translation goes into the editor and the agent's own text stays
  * above it.
  */
+/**
+ * True while the drafting in flight was started by Send rather than by the
+ * language button. The two want different answers to «no translation
+ * needed»: the button tells the agent, Send just sends.
+ */
+const holdInFlight = ref(false);
+
+/**
+ * The composition the agent decided to send in their own words — after
+ * «Ångra översättningen», or after a translation that failed. Compared
+ * against the text on the next press: the decision covers this text, not
+ * whatever the agent writes later on the same ticket.
+ */
+const asWrittenText = ref<string | null>(null);
+
+function sendAsWritten(): boolean {
+  return (
+    asWrittenText.value !== null &&
+    asWrittenText.value === draftSourceText()
+  );
+}
+
+/** Put a drafted translation in the editor and keep the agent's text above it. */
+function adoptOutboundDraft(draft: any, originalText: string) {
+  const translated = draft?.translated_text;
+  if (!translated) return;
+  outboundDraft.value = {
+    translation: draft.translation ?? draft.name ?? null,
+    original_text: originalText,
+    original_html: newEmail.value ?? "",
+    translated_text: translated,
+    source_language: draft.source_language ?? null,
+    target_language: draft.target_language ?? replyLanguage.data?.language,
+  };
+  asWrittenText.value = null;
+  const html = translated.includes("<") ? translated : `<p>${translated}</p>`;
+  newEmail.value = withSignature(html);
+  focusEditorAtStart();
+}
+
 const draftOutbound = createResource({
   url: "helpdesk.api.translation.draft_outbound",
-  makeParams: () => {
+  makeParams: (hold?: boolean) => {
+    holdInFlight.value = Boolean(hold);
     draftRequestText.value = draftSourceText();
-    return { ticket_id: props.ticketId, text: draftRequestText.value };
+    // `hold` asks the server to translate only text that is actually in the
+    // working language; the button translates whatever it is given.
+    return {
+      ticket_id: props.ticketId,
+      text: draftRequestText.value,
+      hold: hold ? 1 : 0,
+    };
   },
   onSuccess: (draft: any) => {
-    const translated = draft?.translated_text;
-    if (!draft?.needs_translation || !translated) {
+    const held = holdInFlight.value;
+    holdInFlight.value = false;
+    if (!draft?.needs_translation || !draft?.translated_text) {
+      // Nothing to translate: the customer reads what the agent wrote. A
+      // press of Send meant «send», so it goes now rather than asking again.
+      if (held) {
+        sendNow();
+        return;
+      }
       toast.info(__("Kunden läser samma språk som du skriver."));
       return;
     }
-    outboundDraft.value = {
-      translation: draft.translation ?? draft.name ?? null,
-      original_text: draftRequestText.value,
-      translated_text: translated,
-      source_language: draft.source_language ?? null,
-      target_language: draft.target_language ?? replyLanguage.data?.language,
-    };
-    const html = translated.includes("<")
-      ? translated
-      : `<p>${translated}</p>`;
-    newEmail.value = withSignature(html);
-    focusEditorAtStart();
+    adoptOutboundDraft(draft, draftRequestText.value);
+    if (held) {
+      toast.info(
+        __("Svaret är översatt till kundens språk. Läs det och skicka igen.")
+      );
+    }
   },
   onError: (error: any) => {
-    toast.error(
-      error?.messages?.[0] || __("Kunde inte översätta svaret.")
-    );
+    const held = holdInFlight.value;
+    holdInFlight.value = false;
+    if (held) {
+      // The engine failed, the desk must still answer: the next press sends
+      // the agent's own words, and says so.
+      asWrittenText.value = draftRequestText.value;
+      toast.error(
+        error?.messages?.[0] ||
+          __("Kunde inte översätta svaret. Skicka igen så går det ut oöversatt.")
+      );
+      return;
+    }
+    toast.error(error?.messages?.[0] || __("Kunde inte översätta svaret."));
   },
 });
 
+/**
+ * «Ångra översättningen»: the agent's own text comes back into the editor and
+ * is what the next press sends — a deliberate discard is not a request to
+ * translate the same words again.
+ */
 function discardOutboundDraft() {
+  const draft = outboundDraft.value;
+  if (!draft) return;
   outboundDraft.value = null;
+  newEmail.value = draft.original_html || withSignature(`<p>${draft.original_text}</p>`);
+  asWrittenText.value = bodyWithoutSignature();
+  focusEditorAtStart();
 }
 
-/** The status "Skicka & markera klar" picked, cleared once the send is answered. */
+/**
+ * The status «Skicka & markera klar» picked. It outlives the hold: chosen on
+ * the press that translated, applied on the press that sends, whichever
+ * button that is. Cleared once the reply has gone or the editor is reset.
+ */
 const pendingStatus = ref<string | null>(null);
 
 /**
@@ -870,12 +972,17 @@ const pendingStatus = ref<string | null>(null);
  * Wave 4 rule asks for. A failure is reported and the draft kept: the server
  * may already have sent the mail, so sending it again from here could double
  * it or send the untranslated text. The agent decides what happens next.
+ *
+ * The mail carries what the editor holds — attachments, Cc, Bcc, and the
+ * translated text as the agent left it; an edit to the translation is what
+ * goes out and what the row keeps.
  */
 const replyTranslated = createResource({
   url: "helpdesk.api.ticket.reply_translated",
   makeParams: (status?: string) => ({
     ticket_id: props.ticketId,
     translation_id: outboundDraft.value?.translation,
+    translated_text: bodyWithoutSignature(),
     status,
     ...replyArgs(),
   }),
@@ -885,20 +992,26 @@ const replyTranslated = createResource({
     onReplySent();
   },
   onError: (error: any) => {
-    pendingStatus.value = null;
     toast.error(
       error?.messages?.[0] || __("Det översatta svaret kunde inte skickas.")
     );
   },
 });
 
-
-const label = computed(() => (sendMail.loading ? "Sending..." : props.label));
+const label = computed(() => {
+  if (sendMail.loading) return "Sending...";
+  if (draftOutbound.loading && holdInFlight.value) return __("Översätter...");
+  if (pendingStatus.value) return `${props.label} & ${pendingStatus.value}`;
+  return props.label;
+});
 
 const isDisabled = computed(
   () =>
     (isContentEmpty(newEmail.value) && isContentEmpty(quotedContent.value)) ||
     sendMail.loading ||
+    sendAndSetStatus.loading ||
+    replyTranslated.loading ||
+    draftOutbound.loading ||
     isUploading.value
 );
 
@@ -928,39 +1041,56 @@ function canSend(): boolean {
  * A ticket answered in the working language never comes here, and neither
  * does an agent who already used «Svara på kundens språk»: they have a draft,
  * and translating a translation is how a reply loses its meaning.
+ *
+ * Nor can the hold trap a reply. Text the server finds is not in the working
+ * language is sent at once (the agent wrote the customer's language
+ * themselves); a composition the agent chose to send as written — after
+ * «Ångra översättningen» or a failed translation — goes through with a
+ * warning. The engine being down is never a reason the desk cannot answer.
  */
 function draftBeforeSending(): boolean {
   if (!needsOutboundTranslation.value) return false;
   if (outboundDraft.value?.translation) return false;
   if (draftOutbound.loading) return true;
-  toast.info(
-    __("Svaret översätts till kundens språk. Läs det och skicka igen.")
-  );
-  draftOutbound.submit();
+  if (sendAsWritten()) {
+    toast.warning(__("Svaret skickas oöversatt, som du skrev det."));
+    return false;
+  }
+  draftOutbound.submit(true);
   return true;
 }
 
-function submitMail() {
-  if (!canSend()) return false;
-  if (draftBeforeSending()) return;
-  // A drafted translation is sent through the door that reviews and sends in
-  // the same motion; without one this is the ordinary reply.
+/**
+ * The reply leaves, by whichever door fits what the editor holds: a drafted
+ * translation goes through the door that reviews and sends in the same
+ * motion, a chosen status through the one that sets it, and the rest is the
+ * ordinary reply. A pending status is applied whichever button was pressed.
+ */
+function sendNow() {
   if (outboundDraft.value?.translation) {
-    replyTranslated.submit();
+    replyTranslated.submit(pendingStatus.value ?? undefined);
+    return;
+  }
+  if (pendingStatus.value) {
+    sendAndSetStatus.submit(pendingStatus.value);
     return;
   }
   sendMail.submit();
 }
 
-function submitMailWithStatus(status: string) {
+function submitMail() {
   if (!canSend()) return false;
   if (draftBeforeSending()) return;
-  if (outboundDraft.value?.translation) {
-    pendingStatus.value = status;
-    replyTranslated.submit(status);
-    return;
-  }
-  sendAndSetStatus.submit(status);
+  sendNow();
+}
+
+function submitMailWithStatus(status: string) {
+  if (!canSend()) return false;
+  // Remembered before the hold, so the status chosen on the press that
+  // translated is the one applied on the press that sends.
+  pendingStatus.value = status;
+  if (draftBeforeSending()) return;
+  sendNow();
 }
 
 function getInitialContent() {
@@ -1003,6 +1133,8 @@ function addToReply(
 // Staged actions are left to `submit()`, which unstages them either way
 function resetState() {
   outboundDraft.value = null;
+  pendingStatus.value = null;
+  asWrittenText.value = null;
   clearReplySources();
   newEmail.value = emailSignature.value ? emailSignature.value : null;
   attachments.value = [];
@@ -1013,6 +1145,8 @@ function resetState() {
 
 function handleDiscard() {
   outboundDraft.value = null;
+  pendingStatus.value = null;
+  asWrittenText.value = null;
   clearReplySources();
   attachments.value = [];
   savedReplyActionsRef.value?.clear();
