@@ -17,6 +17,26 @@ COMPLETION_REQUEST_HINT = (
 
 GENERATED_COMPLETION_REQUEST = "generated_completion_request"
 
+# What a customer calls the things the extraction reports as missing. The raw
+# column names are the database's own vocabulary and must never reach a
+# customer as English words, so they are translated through this explicit map
+# and only an unknown field falls back to its raw name.
+CUSTOMER_FIELD_NAMES = {
+    "customer": "vilket företag ordern gäller",
+    "product": "vilken produkt det gäller",
+    "quantity": "hur många ni vill beställa",
+    "size": "vilka storlekar ni vill ha",
+    "colour": "vilken färg ni vill ha",
+    "color": "vilken färg ni vill ha",
+    "delivery_date": "vilket leveransdatum ni önskar",
+    "delivery_address": "vilken leveransadress ordern ska till",
+    "reference": "vilken referens vi ska märka ordern med",
+    "material": "vilket material det gäller",
+    "artwork": "vilket tryckoriginal vi ska använda",
+    "email": "vilken e-postadress vi ska skicka orderbekräftelsen till",
+    "phone": "vilket telefonnummer vi når er på",
+}
+
 # The question type that marks a recurring question, and so selects the prompt
 # tuned for one. Answering "hur lång är leveranstiden" is a different job from
 # drafting a reply to a question nobody has asked before, and the two are tuned
@@ -176,6 +196,38 @@ def record_reply_draft(
     _apply_auto_reply_policy(doc)
     doc.insert(ignore_permissions=True)
     return doc.as_dict()
+
+
+def _cited_sources(draft: dict) -> list:
+    """Return what a stored draft rests on, as rows the editor can render.
+
+    `record_reply_draft` keeps the sources; this is only a view of them, so
+    the suggestion and `get_reply_sources` can never disagree about what the
+    answer was drafted from.
+    """
+    sources = draft.get("sources") or []
+    if isinstance(sources, str):
+        sources = json.loads(sources or "[]")
+    rows = []
+    for source in sources:
+        row = {
+            "article": source.get("article") or source.get("name"),
+            "title": source.get("title"),
+        }
+        # A draft that recorded which version it read keeps saying so, so the
+        # editor can show the same staleness get_reply_sources computes.
+        for stamp in ("version", "modified"):
+            if source.get(stamp) is not None:
+                row[stamp] = source.get(stamp)
+        rows.append(row)
+    return rows
+
+
+def _with_sources(draft: dict) -> dict:
+    """Hand the editor the draft and its citations in one answer."""
+    answer = dict(draft)
+    answer["sources"] = _cited_sources(draft)
+    return answer
 
 
 def _reply_prompt_name(question_type: str | None) -> str:
@@ -380,6 +432,23 @@ def generate_completion_request(
     return draft
 
 
+def _completion_request_body(missing: list) -> str:
+    """Ask, in one Swedish sentence, for what the order still lacks.
+
+    The customer reads this text, so it names the things the way they would:
+    no field names, no parentheses and no bullet list of column names.
+    """
+    named = [CUSTOMER_FIELD_NAMES.get(field, field) for field in missing]
+    if len(named) == 1:
+        asked = named[0]
+    else:
+        asked = ", ".join(named[:-1]) + " och " + named[-1]
+    return (
+        "Hej! För att vi ska kunna gå vidare med er order behöver vi veta "
+        f"{asked}."
+    )
+
+
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def draft_completion_request(
@@ -389,9 +458,7 @@ def draft_completion_request(
     extraction, missing = _missing_order_fields(extraction_id)
     return record_reply_draft(
         ticket_id=extraction.ticket,
-        body=_("To continue with your order we still need: {0}").format(
-            ", ".join(missing)
-        ),
+        body=_completion_request_body(missing),
         question_type="completion_request",
         sources=[],
         confidence=1,
@@ -433,14 +500,17 @@ def suggest_reply(ticket_id: str) -> dict:
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     extraction = _newest_extraction(ticket_id)
     if extraction and _missing_of(extraction):
-        return draft_completion_request(extraction.name)
+        return _with_sources(draft_completion_request(extraction.name))
 
     question = ai_generation.ticket_text(ticket_id)
     if question and search_knowledge(question, limit=1):
-        return draft_knowledge_reply(ticket_id=ticket_id, question=question)
+        return _with_sources(
+            draft_knowledge_reply(ticket_id=ticket_id, question=question)
+        )
 
     return {
         "body": None,
+        "sources": [],
         "reason": _(
             "Inget förslag: ordern saknar inga uppgifter och kunskapsbiblioteket "
             "har inget godkänt svar på frågan."
