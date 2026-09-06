@@ -87,7 +87,7 @@ import {
 } from "frappe-ui/frappe";
 
 import { HelpIcon } from "frappe-ui/icons";
-import { computed, h, markRaw, onMounted, ref } from "vue";
+import { computed, h, markRaw, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import AppSidebar from "./AppSidebar.vue";
 import { showShortcutsModal } from "./layoutSettings";
@@ -484,6 +484,19 @@ async function getGeneralCategory() {
 function setUpOnboarding() {
   if (!authStore.isManager) return;
   setUp(steps);
+  // setUp opens the help panel whenever the checklist is unfinished, and it
+  // reads that from browser storage, which is empty in every new browser. The
+  // server knows better, but its answer arrives after the panel is already
+  // open, and nothing closes it again: a manager on a fresh machine gets an
+  // empty panel over the ticket they came to read. Close it when the answer
+  // says the checklist is done. The button and Cmd+H still open it by hand.
+  watch(
+    isOnboardingStepsCompleted,
+    (done) => {
+      if (done) showHelpModal.value = false;
+    },
+    { immediate: true }
+  );
   useShortcut({ key: "h", meta: true }, () => {
     showHelpModal.value = !showHelpModal.value;
   });
