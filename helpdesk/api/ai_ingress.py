@@ -989,7 +989,7 @@ def archive_sent_reply(message: str) -> dict:
 
     working = translation.get_working_language()
     detected = translation.detect_language_code(text)
-    if not detected or detected == working:
+    if not detected or translation.same_language(detected, working):
         # Undetectable counts as at home: guessing at a language would file a
         # Swedish reply as foreign and buy a copy of it in its own words.
         done["reason"] = "already in the working language"

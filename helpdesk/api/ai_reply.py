@@ -183,7 +183,7 @@ def _brought_home(reply, knowledge, working):
     keep off the agent's screen.
     """
     detected = translation.detect_language_code(reply["body"])
-    if not detected or detected == working:
+    if not detected or translation.same_language(detected, working):
         return reply
 
     try:
@@ -198,7 +198,9 @@ def _brought_home(reply, knowledge, working):
             f"{frappe.get_traceback()}",
         )
 
-    if text and translation.detect_language_code(text) == working:
+    if text and translation.same_language(
+        translation.detect_language_code(text), working
+    ):
         return {**reply, "body": text, **_summed_costs(reply, generation)}
 
     if knowledge:

@@ -20,14 +20,51 @@ LANGUAGE_MARKERS = {
 }
 
 
-def detect_language_code(text):
-    """Identify a message's language from the common words it uses."""
+def normalise_language(code):
+    """Reduce a language tag to the language: «sv-SE», «sv_SE» and «SV» are all «sv».
+
+    A customer card says what the customer reads as a locale as often as as a
+    language, and the working language is a bare code. Compared raw, «sv-SE»
+    is not «sv» and a Swedish ticket is held for translation into Swedish.
+    """
+    if not code:
+        return None
+    return re.split(r"[-_]", str(code).strip().lower(), maxsplit=1)[0] or None
+
+
+def same_language(a, b):
+    """Whether two language tags name the same language, whatever their locale."""
+    return normalise_language(a) is not None and normalise_language(a) == normalise_language(b)
+
+
+def _marker_scores(text):
     words = set(re.findall(r"[a-zà-öø-ÿ]+", (text or "").lower()))
-    scores = {
+    return {
         code: len(words & set(markers)) for code, markers in LANGUAGE_MARKERS.items()
     }
+
+
+def detect_language_code(text):
+    """Identify a message's language from the common words it uses."""
+    scores = _marker_scores(text)
     best = max(scores, key=scores.get)
     return best if scores[best] else None
+
+
+def is_confidently_in(text, language):
+    """Whether the marker list can say, without a rival, that `text` is in `language`.
+
+    The detector is six words per language and a tie goes to whichever
+    language was listed first, which is no basis for stopping a reply. This
+    holds only when `language`'s markers are present and no other language
+    scores as high; when the detector cannot tell, the answer is no.
+    """
+    code = normalise_language(language)
+    if not code or code not in LANGUAGE_MARKERS:
+        return False
+    scores = _marker_scores(text)
+    own = scores[code]
+    return own > 0 and all(score < own for other, score in scores.items() if other != code)
 
 
 @frappe.whitelist()
@@ -644,13 +681,13 @@ def reply_language(ticket_id: str) -> dict:
         "language": language,
         "source": source,
         "working_language": working,
-        "needs_translation": 1 if language != working else 0,
+        "needs_translation": 0 if same_language(language, working) else 1,
     }
 
 
 @frappe.whitelist(methods=["POST"])
 @agent_only
-def draft_outbound(ticket_id: str, text: str) -> dict:
+def draft_outbound(ticket_id: str, text: str, hold: int | bool = 0) -> dict:
     """Translate an agent's reply into the customer's language, without sending it.
 
     A draft is a draft: the row is recorded unreviewed and unsent, because the
@@ -661,11 +698,24 @@ def draft_outbound(ticket_id: str, text: str) -> dict:
     is not asked, so translating Swedish into Swedish costs neither a call nor
     a row. Noticing afterwards that the answer was the same would be paid for
     all the same.
+
+    `hold` is the Send button asking, not the language button: it translates
+    only text that is plainly in the working language, and answers «no
+    translation needed» for text the agent wrote in the customer's language
+    or text the detector cannot place. The button translates what it is given.
     """
     reply = reply_language(ticket_id)
     if not reply["needs_translation"]:
         return {
             "needs_translation": 0,
+            "language": reply["language"],
+            "source": reply["source"],
+            "text": text,
+        }
+    if frappe.utils.cint(hold) and not is_confidently_in(text, reply["working_language"]):
+        return {
+            "needs_translation": 0,
+            "reason": "not in the working language",
             "language": reply["language"],
             "source": reply["source"],
             "text": text,
@@ -713,9 +763,11 @@ def hold_untranslated_reply(ticket_id: str, message: str) -> dict | None:
     plain = frappe.utils.strip_html_tags(message or "").strip()
     if not plain:
         return None
-    # Only the house's own language is held. An unrecognised text is left
-    # alone: guessing wrong here would block a reply that is perfectly fine.
-    if detect_language_code(plain) != reply["working_language"]:
+    # Only the house's own language is held, and only when the detector says
+    # so without a rival. An unrecognised or ambiguous text is left alone: a
+    # false hold costs a model call and confuses the agent, while a missed one
+    # is caught by the archive copy, which is the cheaper mistake.
+    if not is_confidently_in(plain, reply["working_language"]):
         return None
 
     # A second attempt with the same words finds the first attempt's draft.
