@@ -890,10 +890,24 @@ def _ticket_text(ticket_id: str) -> str:
 
 ARCHIVE_JOB_PREFIX = f"{JOB_PREFIX}-archive"
 
+# Set by merge_ticket and split_ticket around the notice they mail through the
+# reply door. The notice is the desk's own boilerplate, written by nobody, and
+# the archive owes it no copy.
+SYSTEM_NOTICE_FLAG = "helpdesk_system_notice"
+
 
 def _archive_key(message: str) -> str:
     """The idempotency key of one sent reply's working-language copy."""
     return f"archive-copy-{message}"
+
+
+def _archive_possible() -> bool:
+    """Whether a copy could be bought at all: a runner switched on, an engine to ask."""
+    if not ai_runner.is_runner_available():
+        return False
+    from helpdesk.api import ai_engine
+
+    return bool(ai_engine.engine_chain(ai_generation.TRANSLATION_OUTBOUND))
 
 
 def enqueue_archive_copy(doc, method=None) -> None:
@@ -906,6 +920,11 @@ def enqueue_archive_copy(doc, method=None) -> None:
     The work itself is skipped for free whenever the reply is already at home
     (`archive_sent_reply`), so an all-Swedish desk pays nothing either way.
 
+    It is gated on there being anything to run it with. A desk with the runner
+    switched off, or no engine to translate on, would otherwise queue a job per
+    sent reply that fails and logs an error, forever; that desk gets no copies
+    and no noise.
+
     Queued and silent for the same reasons as every other hook here: a model
     call inside `after_insert` would make sending a reply wait on a provider,
     and a failed copy must never cost the reply.
@@ -915,12 +934,17 @@ def enqueue_archive_copy(doc, method=None) -> None:
     if doc.sent_or_received != "Sent":
         return
     # Only real correspondence. Automatic acknowledgements and system notes are
-    # not something an agent wrote and not something the archive owes a copy of.
+    # not something an agent wrote and not something the archive owes a copy of;
+    # neither is the notice a merge or a split mails through the reply door.
     if doc.communication_type != "Communication":
+        return
+    if frappe.flags.get(SYSTEM_NOTICE_FLAG):
+        return
+    if not _archive_possible():
         return
     try:
         frappe.enqueue(
-            "helpdesk.api.ai_ingress.archive_sent_reply",
+            "helpdesk.api.ai_ingress._archive_sent_reply",
             queue=QUEUE,
             job_id=f"{ARCHIVE_JOB_PREFIX}-{doc.name}",
             deduplicate=True,
@@ -935,22 +959,58 @@ def enqueue_archive_copy(doc, method=None) -> None:
         )
 
 
+def _already_archived(ticket_id: str, text: str) -> bool:
+    """Whether this text already has its archive copy on this correspondence.
+
+    A merge re-inserts every historical Communication under a new name, and a
+    guard keyed on the name sees a reply nobody has archived. The text is what
+    was sent, so the same text already copied on this ticket — or on a ticket
+    that was merged into it, which is where the copy of a merged reply lives —
+    is not copied again.
+    """
+    tickets = [ticket_id] + frappe.get_all(
+        "HD Ticket", filters={"merged_with": ticket_id}, pluck="name"
+    )
+    return bool(
+        frappe.db.exists(
+            "HD Message Translation",
+            {
+                "ticket": ("in", tickets),
+                "direction": "Outbound",
+                "sent_side": "Original",
+                "original_text": text,
+            },
+        )
+    )
+
+
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def archive_sent_reply(message: str) -> dict:
     """Keep a working-language copy of a reply an agent wrote in another language.
 
+    The public door, for an agent replaying a copy by hand. The queued job
+    takes the internal path below, because the job runs as whoever sent the
+    reply — a policy, a worker — and a reply is owed its copy whoever sent it.
+    """
+    return _archive_sent_reply(message)
+
+
+def _archive_sent_reply(message: str) -> dict:
+    """Write the copy: the job's path, reachable from the hook and nowhere public.
+
     The reply has already gone; this cannot stop it and does not try. It is what
     lets the next agent read what was promised, and lets anyone check it against
     the library afterwards.
 
-    Three cases cost nothing at all. A reply already in the working language is
+    Four cases cost nothing at all. A reply already in the working language is
     the ordinary one, and paying a model to turn Swedish into Swedish is the
     sort of bill nobody notices until it arrives — so the detector, which is
     local, decides before any engine is asked. A reply whose Communication
     already carries an outbound translation was drafted at home and translated
-    through the reviewed door, so the house has its copy already. And a second
-    run finds the first run's row by its key and records nothing.
+    through the reviewed door, so the house has its copy already. A second run
+    finds the first run's row by its key and records nothing. And a text the
+    house already copied for this correspondence is not copied again.
 
     The row is deliberately unreviewed: nobody has read the machine's Swedish.
     `sent_side` says `Original`, because here it is the original that reached
@@ -986,6 +1046,9 @@ def archive_sent_reply(message: str) -> dict:
     ):
         done["reason"] = "the reply already has an outbound translation"
         return done
+    if _already_archived(ticket_id, text):
+        done.update(archived=True, reason="the same text is already copied")
+        return done
 
     working = translation.get_working_language()
     detected = translation.detect_language_code(text)
@@ -995,7 +1058,15 @@ def archive_sent_reply(message: str) -> dict:
         done["reason"] = "already in the working language"
         return done
 
+    # The record endpoint is agent-only, and the job runs as whoever sent the
+    # reply. The copy is the house's bookkeeping, so it is written as the
+    # house when the sender is not an agent; an agent's copy keeps their name.
+    from helpdesk.utils import is_agent
+
+    user = frappe.session.user
     try:
+        if not is_agent():
+            frappe.set_user("Administrator")
         # The plain-text translation prompt, the same one a drafted reply is
         # translated with; the inbound prompt answers JSON and detects the
         # language, which is work already done here.
@@ -1022,4 +1093,7 @@ def archive_sent_reply(message: str) -> dict:
             message=f"could not archive the reply sent as {message}\n\n"
             f"{frappe.get_traceback()}",
         )
+    finally:
+        if frappe.session.user != user:
+            frappe.set_user(user)
     return done
