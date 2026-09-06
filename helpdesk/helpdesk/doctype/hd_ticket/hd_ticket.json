@@ -570,6 +570,14 @@
    "label": "AI Cost",
    "precision": "6",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when an AI record on this ticket has a cost nobody could price in full; the sum above is then a floor, not the bill. Maintained by helpdesk.api.ai_cost.",
+   "fieldname": "ai_cost_unpriced",
+   "fieldtype": "Check",
+   "label": "AI Cost Unpriced",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
