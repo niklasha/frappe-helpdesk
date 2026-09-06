@@ -120,6 +120,7 @@ def reply_and_set_status(
     bcc: str | None = None,
     attachments: list | str | None = None,
     from_email: dict | str | None = None,
+    as_written: int | bool = 0,
 ) -> dict:
     """Send an agent reply and move the ticket to `status` in one action.
 
@@ -127,6 +128,12 @@ def reply_and_set_status(
     (HD Ticket.reply_via_agent), so it lands as a Sent Communication on the
     thread. The status is checked before anything is sent: a status the site
     has not defined must not cost the customer a message.
+
+    On a ticket answered in another language a working-language reply is held
+    rather than sent (LANG-08): the answer is `{"held": 1, ...}` carrying the
+    drafted translation, and no mail leaves. `as_written` is the agent's
+    decision to send their own words regardless — after discarding a draft or
+    a translation that failed — and steps past the hold.
     """
     if isinstance(attachments, str):
         attachments = frappe.parse_json(attachments) or []
@@ -148,22 +155,38 @@ def reply_and_set_status(
 
     # LANG-08: a ticket answered in another language must not receive the
     # working language straight off the editor. The reply is not lost — it is
-    # drafted into the customer’s language and left waiting for the review that
-    # `reply_translated` performs, which is the door this send should have used.
-    held = hold_untranslated_reply(ticket_id, message)
+    # drafted into the customer’s language and handed back to the caller,
+    # waiting for the review that `reply_translated` performs, which is the
+    # door this send should have used. Handed back, not thrown: a throw rolls
+    # the request back and the draft with it, and a draft committed before
+    # the throw is a row nobody is told about.
+    held = None
+    if not cint(as_written):
+        try:
+            held = hold_untranslated_reply(ticket_id, message)
+        except Exception:
+            # The engine is down. That stops the translation, never the
+            # answer: the reply goes out as written and the failure is logged.
+            frappe.log_error(
+                title="Helpdesk translation",
+                message=f"could not hold the reply on {ticket_id} for translation\n\n"
+                f"{frappe.get_traceback()}",
+            )
     if held:
-        # The refusal below rolls the request back, and the draft must survive
-        # it: a reply that is stopped and then thrown away is a reply the agent
-        # has to write twice. Nothing else has been written at this point, so
-        # the commit persists the draft and nothing more.
-        frappe.db.commit()
-        frappe.throw(
-            _(
-                "Kunden läser {0}. Svaret är översatt och väntar på din "
-                "granskning — läs översättningen och skicka den."
-            ).format(held.get("target_language") or _("ett annat språk")),
-            title=_("Svaret är inte översatt"),
-        )
+        return {
+            "held": 1,
+            "needs_translation": 1,
+            "communication": None,
+            "status": status,
+            "translation": held.get("name"),
+            "name": held.get("name"),
+            "original_text": held.get("original_text"),
+            "translated_text": held.get("translated_text"),
+            "source_language": held.get("source_language"),
+            "target_language": held.get("target_language"),
+            "reviewed": held.get("reviewed") or 0,
+            "sent_on": held.get("sent_on"),
+        }
 
     ticket = frappe.get_doc("HD Ticket", ticket_id)
 
@@ -199,7 +222,16 @@ def reply_and_set_status(
 @frappe.whitelist(methods=["POST"])
 @agent_only
 def reply_translated(
-    ticket_id: str, translation_id: str, status: str | None = None
+    ticket_id: str,
+    translation_id: str,
+    status: str | None = None,
+    message: str | None = None,
+    translated_text: str | None = None,
+    to: str | None = None,
+    cc: str | None = None,
+    bcc: str | None = None,
+    attachments: list | str | None = None,
+    from_email: dict | str | None = None,
 ) -> dict:
     """Send a reviewed translation to the customer in the customer's language.
 
@@ -209,10 +241,23 @@ def reply_translated(
     names them, and both marks land together — no row can end up sent but
     unreviewed, or reviewed by nobody.
 
+    The mail carries what the ordinary door carries: `message` is the body as
+    the editor holds it (signature, quoted thread and all), and attachments,
+    Cc, Bcc and the sending account travel with it. `translated_text` is the
+    translation as the agent left it in the editor; an edit is what the
+    customer gets and what the row keeps, recorded as that agent's review.
+    Without a `message` the stored translation is sent, which is what a
+    caller that never showed an editor means.
+
     The Swedish the agent wrote stays on the row as `original_text`, so the
     thread can still show what was meant beside what was said.
     """
     from helpdesk.api.translation import mark_translation_sent, review_translation
+
+    if isinstance(attachments, str):
+        attachments = frappe.parse_json(attachments) or []
+    if isinstance(from_email, str):
+        from_email = frappe.parse_json(from_email) or None
 
     frappe.has_permission("HD Ticket", "write", doc=ticket_id, throw=True)
 
@@ -248,12 +293,18 @@ def reply_translated(
             title=_("Arkivkopia"),
         )
 
-    message = (doc.translated_text or "").strip()
-    if not message:
+    # The agent's edit of the translation, if any: what goes out and what the
+    # row stores. An empty edit is no edit, so the stored text stands.
+    edited = (translated_text or "").strip()
+    if edited and edited != (doc.translated_text or "").strip():
+        doc.translated_text = edited
+    stored = (doc.translated_text or "").strip()
+    if not stored:
         frappe.throw(
             _("Översättningen är tom och kan inte skickas."),
             title=_("Tom översättning"),
         )
+    message = (message or "").strip() or stored
 
     # Check the status before anything is sent: a status the site has not
     # defined must not cost the customer a message.
@@ -272,11 +323,18 @@ def reply_translated(
     # refuses an unreviewed row. If the send fails the request rolls back and
     # the marks go with it; done the other way round, a failure after the mail
     # had gone would leave a sent mail beside a row that says unsent.
-    review_translation(translation_id)
+    review_translation(translation_id, translated_text=edited or None)
     row = mark_translation_sent(translation_id)
 
     ticket = frappe.get_doc("HD Ticket", ticket_id)
-    ticket.reply_via_agent(message, to=ticket.raised_by)
+    ticket.reply_via_agent(
+        message,
+        from_email=from_email,
+        to=to or ticket.raised_by,
+        cc=cc,
+        bcc=bcc,
+        attachments=attachments or [],
+    )
 
     communication = frappe.db.get_value(
         "Communication",

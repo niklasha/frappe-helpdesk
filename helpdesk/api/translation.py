@@ -718,6 +718,24 @@ def hold_untranslated_reply(ticket_id: str, message: str) -> dict | None:
     if detect_language_code(plain) != reply["working_language"]:
         return None
 
+    # A second attempt with the same words finds the first attempt's draft.
+    # Every hold that generated afresh would leave the previous row behind,
+    # unreviewed and unsent, for nobody.
+    waiting = frappe.get_all(
+        "HD Message Translation",
+        filters={
+            "ticket": ticket_id,
+            "direction": "Outbound",
+            "original_text": plain,
+            "sent_on": ("is", "not set"),
+        },
+        fields=["name"],
+        order_by="creation desc",
+        limit_page_length=1,
+    )
+    if waiting:
+        return frappe.get_doc("HD Message Translation", waiting[0]["name"]).as_dict()
+
     return generate_outbound_translation(
         ticket_id=ticket_id,
         original_text=plain,
