@@ -1,14 +1,17 @@
-"""Say, on every translation row that predates the field, which side left the house.
+"""Say, on every outbound translation row that predates the field, which side left.
 
-Until Wave 25b a row could only be read one way: an agent wrote the original in
-the working language and the customer received the translation. That is what
-every existing row means, so they are all stamped `Translation` — including the
-inbound ones, where the customer's own words are the original and our reading of
-them never went anywhere.
+Until Wave 25b an outbound row could only be read one way: an agent wrote the
+original in the working language and the customer received the translation.
+That is what every existing outbound row means, so they are all stamped
+`Translation`.
 
-The other value only appears from now on, on a reply an agent wrote themselves in
-the customer's language: there the original is what was sent and the translation
-is the house's archive copy.
+An inbound row is left alone. It is the customer's own words and our reading
+of them, and nothing of it ever left the house; stamping it would claim the
+desk mailed the customer its reading of their mail.
+
+The other value only appears from now on, on a reply an agent wrote themselves
+in the customer's language: there the original is what was sent and the
+translation is the house's archive copy.
 """
 
 import frappe
@@ -25,6 +28,8 @@ def execute():
         """
         UPDATE `tabHD Message Translation`
         SET sent_side = 'Translation'
-        WHERE sent_side IS NULL OR sent_side = ''
+        WHERE direction = 'Outbound'
+          AND (sent_side IS NULL OR sent_side = '')
         """
     )
+    frappe.db.commit()

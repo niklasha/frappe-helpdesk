@@ -10,10 +10,13 @@ from helpdesk.utils import agent_only
 
 KNOWLEDGE_REPLY_PROMPT_NAME = ai_generation.KNOWLEDGE_REPLY
 
-COMPLETION_REQUEST_HINT = (
-    "Write the reply in Swedish, and ask only for the fields listed below. "
-    "Name each one in wording the customer will recognise."
-)
+def _completion_request_hint(working):
+    """Ask for the working language, not for Swedish: the setting decides."""
+    return (
+        f"Write the reply in the language with the code {working}, and ask only "
+        "for the fields listed below. Name each one in wording the customer "
+        "will recognise."
+    )
 
 GENERATED_COMPLETION_REQUEST = "generated_completion_request"
 
@@ -150,62 +153,174 @@ def _extracted_reply(knowledge):
     }
 
 
-def _summed_costs(reply, generation):
-    """Add what the repair cost to what the draft cost, in the record's fields.
+def _summed_costs(reply, *generations):
+    """Add what every further call cost to what the draft cost, in the record's fields.
 
-    The repair is a second call on the same draft, so its tokens belong to the
-    same row: a ticket's roll-up that counted only the first call would show a
-    price nobody was charged. The cost is known only when both halves are, and
-    the engine named stays the one that wrote the answer.
+    A language check or a repair is another call on the same draft, so its
+    tokens belong to the same row: a ticket's roll-up that counted only the
+    first call would show a price nobody was charged. `ai_cost` is the sum of
+    the calls that have a price and `cost_known` says whether every call had
+    one, so a row with a real cost and `cost_known` 0 reads «at least this
+    much», which is how the ticket's roll-up counts it (Wave 25b). The engine
+    named stays the one that wrote the answer.
     """
     costs = {field: reply.get(field) for field in ai_generation.COST_FIELDS}
-    for field in ai_generation.TOKEN_FIELDS:
-        costs[field] = cint(costs.get(field)) + cint(generation.get(field))
-    known = cint(reply.get("cost_known")) and cint(generation.get("cost_known"))
-    costs["ai_cost"] = flt(reply.get("ai_cost")) + flt(generation.get("ai_cost"))
+    known = cint(reply.get("cost_known"))
+    for generation in generations:
+        for field in ai_generation.TOKEN_FIELDS:
+            costs[field] = cint(costs.get(field)) + cint(generation.get(field))
+        costs["ai_cost"] = flt(costs.get("ai_cost")) + flt(generation.get("ai_cost"))
+        known = known and cint(generation.get("cost_known"))
     costs["cost_known"] = 1 if known else 0
     return costs
 
 
-def _brought_home(reply, knowledge, working):
-    """Return a draft in the working language, whatever language the engine wrote.
+# What the language check concluded about the text that is in the draft. It
+# is recorded on the row because a policy that releases drafts must not
+# release one the desk could not place, and an agent should know which of
+# the three they are reading.
+LANGUAGE_CONFIRMED = "Confirmed"
+LANGUAGE_REPAIRED = "Repaired"
+LANGUAGE_INCONCLUSIVE = "Inconclusive"
+
+AT_HOME = "home"
+ABROAD = "foreign"
+
+
+def _cheap_verdict(text, working):
+    """What the marker list can say on its own: AT_HOME, ABROAD or None.
+
+    Six words per language cannot carry a decision that costs a model call or
+    releases a draft, so the list is trusted only when it is not in doubt. The
+    working language wins outright when its markers clearly outnumber every
+    rival's — twice as many, so a Swedish draft that happens to say «order»
+    still counts as Swedish. A text with none of its markers and some of
+    another language's is clearly foreign. Everything else is None: a short
+    text with no markers, a tie between Swedish and Danish over «hej», a
+    Swedish greeting on an English body, or a working language the table has
+    no words for at all. None means a model is asked, not that a guess is
+    made.
+    """
+    code = translation.normalise_language(working)
+    scores = translation._marker_scores(text)
+    if not code or code not in scores:
+        return None
+    own = scores[code]
+    top = max((score for other, score in scores.items() if other != code), default=0)
+    if own and own > top and own >= 2 * top:
+        return AT_HOME
+    if not own and top:
+        return ABROAD
+    return None
+
+
+def _asked_language(text, working):
+    """Ask the model which language a text is in, with the inbound detector.
+
+    This is the one call the check may spend when the markers cannot tell.
+    The inbound prompt names the language and, when it is not the working
+    one, translates in the same answer — so an uncertain foreign draft is
+    identified and repaired for the price of one call.
+    """
+    answer, generation = translation._detected_translation(text, working)
+    return (
+        translation.normalise_language(answer.get("language")),
+        (answer.get("translation") or "").strip() or None,
+        generation,
+    )
+
+
+def _inconclusive(reply, generations, why):
+    frappe.log_error(
+        title="Helpdesk AI reply",
+        message=f"{why}\n\n{frappe.get_traceback()}",
+    )
+    return {
+        **reply,
+        "language_check": LANGUAGE_INCONCLUSIVE,
+        **_summed_costs(reply, *generations),
+    }
+
+
+def _brought_home(reply, working):
+    """Return the draft in the working language, saying how sure the check is.
 
     The instruction in the prompt is not a guarantee: a model that ignores it
     hands the agent an answer they may not read, and one nobody has checked
-    against the Swedish articles it was drafted from. So the answer is verified
-    with the same detector the thread uses, and only a foreign answer costs the
-    repair — the ordinary case is one call, as before.
+    against the articles it was drafted from. So the answer is checked — in
+    three states, not two. A draft the markers place at home costs nothing
+    more. One they place abroad is repaired. One they cannot place costs one
+    model call to identify, and never more than one; the ordinary Swedish
+    draft is still one call, as before.
 
-    When even the repair comes back foreign, the approved wording itself is
-    what the agent gets. It is worse prose and it is the one text on the table
-    that is both in the working language and actually approved; an unreviewed
-    machine rendering of the library is precisely what this wave exists to
-    keep off the agent's screen.
+    The draft is never thrown away. A repair that still does not verify is
+    kept with its provenance and everything the calls cost, and the check is
+    recorded as inconclusive. Replacing a paid answer with the raw article
+    text lost the provider, the model, the prompt version and the two calls
+    that were charged, and handed the agent a wall of pasted article bodies —
+    worse than the problem it was meant to solve. The recorded verdict is
+    what keeps such a text from being released by a policy.
     """
-    detected = translation.detect_language_code(reply["body"])
-    if not detected or translation.same_language(detected, working):
-        return reply
+    body = reply["body"]
+    verdict = _cheap_verdict(body, working)
+    if verdict == AT_HOME:
+        return {**reply, "language_check": LANGUAGE_CONFIRMED}
 
-    try:
-        text, generation = translation._generated_translation(
-            reply["body"], detected, working, ai_generation.TRANSLATION_OUTBOUND
-        )
-    except Exception:
-        text, generation = None, None
-        frappe.log_error(
-            title="Helpdesk AI reply",
-            message="could not bring a foreign draft home\n\n"
-            f"{frappe.get_traceback()}",
-        )
+    generations = []
+    detected = translation.detect_language_code(body) if verdict == ABROAD else None
+    repaired = None
+    asked = False
+    if verdict is None:
+        try:
+            detected, repaired, generation = _asked_language(body, working)
+        except Exception:
+            return _inconclusive(
+                reply, generations, "could not identify the language of a draft"
+            )
+        generations.append(generation)
+        asked = True
+        if translation.same_language(detected, working):
+            return {
+                **reply,
+                "language_check": LANGUAGE_CONFIRMED,
+                **_summed_costs(reply, *generations),
+            }
 
-    if text and translation.same_language(
-        translation.detect_language_code(text), working
-    ):
-        return {**reply, "body": text, **_summed_costs(reply, generation)}
+    if not repaired:
+        try:
+            repaired, generation = translation._generated_translation(
+                body, detected, working, ai_generation.TRANSLATION_OUTBOUND
+            )
+        except Exception:
+            return _inconclusive(
+                reply, generations, "could not bring a foreign draft home"
+            )
+        generations.append(generation)
 
-    if knowledge:
-        return _extracted_reply(knowledge)
-    return reply
+    # The repaired text is checked the same way, with the same budget: the
+    # markers first, and the one model call only if it has not been spent.
+    check = LANGUAGE_INCONCLUSIVE
+    after = _cheap_verdict(repaired, working)
+    if after == AT_HOME:
+        check = LANGUAGE_REPAIRED
+    elif after is None and not asked:
+        try:
+            language, _same, generation = _asked_language(repaired, working)
+            generations.append(generation)
+            if translation.same_language(language, working):
+                check = LANGUAGE_REPAIRED
+        except Exception:
+            frappe.log_error(
+                title="Helpdesk AI reply",
+                message="could not verify a repaired draft\n\n"
+                f"{frappe.get_traceback()}",
+            )
+    return {
+        **reply,
+        "body": repaired,
+        "language_check": check,
+        **_summed_costs(reply, *generations),
+    }
 
 
 def _apply_auto_reply_policy(doc):
@@ -245,6 +360,7 @@ def record_reply_draft(
     cache_write_tokens: int | None = None,
     ai_cost: float | None = None,
     cost_known: int | bool | None = 0,
+    language_check: str | None = None,
 ) -> dict:
     """Persist a proposed customer reply for human review, replayable by key."""
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
@@ -281,6 +397,7 @@ def record_reply_draft(
             "model_version": model_version,
             "prompt_version": prompt_version,
             "idempotency_key": idempotency_key,
+            "language_check": language_check,
             **costs,
         }
     )
@@ -379,12 +496,17 @@ def _draft_from_articles(
     reply = (
         _brought_home(
             _generated_reply(engines, knowledge, question, prompt_name, working),
-            knowledge,
             working,
         )
         if engines
         else _extracted_reply(knowledge)
     )
+    # The confidence describes the text that is in the draft, not the articles
+    # it was drafted from. A body the check could not place is not something a
+    # released question type may auto-send, whatever the sources covered.
+    confidence = _confidence(articles)
+    if reply.get("language_check") == LANGUAGE_INCONCLUSIVE:
+        confidence = 0
     draft = record_reply_draft(
         ticket_id=ticket_id,
         body=reply["body"],
@@ -392,7 +514,8 @@ def _draft_from_articles(
         question_type=question_type,
         language=language,
         sources=sources,
-        confidence=_confidence(articles),
+        confidence=confidence,
+        language_check=reply.get("language_check"),
         provider=reply["provider"],
         model_version=reply["model_version"],
         prompt_version=reply["prompt_version"],
@@ -527,28 +650,34 @@ def generate_completion_request(
     # The engine is handed each field the way the customer would name it, next
     # to the key the extraction uses, so it asks for "antal" and not "quantity".
     named = zip(missing, _customer_names(missing))
+    working = translation.get_working_language()
     body, response = ai_generation.generate_text(
         engines,
         instructions,
         "\n".join(f"{field}: {name}" for field, name in named),
-        COMPLETION_REQUEST_HINT,
+        _completion_request_hint(working),
         call=ai_generation.COMPLETION_REQUEST,
     )
     generation = ai_generation.provenance(response, prompt_version)
+    # Free text gets the same check as every other generation: the hint asks
+    # for the working language, and asking is not the same as getting.
+    reply = _brought_home({"body": body, **generation}, working)
+    provenance = {field: reply.get(field) for field in generation}
     draft = record_reply_draft(
         ticket_id=extraction.ticket,
-        body=body,
+        body=reply["body"],
         question_type=GENERATED_COMPLETION_REQUEST,
         sources=[],
         confidence=0,
         idempotency_key=idempotency_key,
-        **generation,
+        language_check=reply.get("language_check"),
+        **provenance,
     )
     ai_generation.attribute(
         "wrote a completion request",
         "HD AI Reply Draft",
         draft["name"],
-        generation,
+        provenance,
     )
     return draft
 

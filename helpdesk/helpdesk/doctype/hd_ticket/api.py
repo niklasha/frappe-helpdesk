@@ -368,10 +368,7 @@ def merge_ticket(source: str, target: str):
     message = _(
         "This ticket (#{0}) has been merged with ticket <a href = '/helpdesk/tickets/{1}'>#{1}</a>."
     ).format(source, target)
-    controller.reply_via_agent(
-        doc,
-        message=message,
-    )
+    _send_system_notice(controller, doc, message)
 
     # comment in target ticket that
     c = frappe.new_doc("HD Ticket Comment")
@@ -383,6 +380,23 @@ def merge_ticket(source: str, target: str):
         f"Ticket <a href={source_link}> #{source}</a>  has been merged with ticket #{target}."
     )
     c.save()
+
+
+def _send_system_notice(controller, ticket, message: str) -> None:
+    """Mail a notice the desk writes itself, marked so the archive skips it.
+
+    Merge and split send their boilerplate through the same door as an agent's
+    reply. The archive copy (Wave 25b, LANG-09) is owed only to what an agent
+    actually wrote to the customer, so the notice is flagged for the length of
+    its send and `enqueue_archive_copy` leaves it alone.
+    """
+    from helpdesk.api.ai_ingress import SYSTEM_NOTICE_FLAG
+
+    frappe.flags[SYSTEM_NOTICE_FLAG] = True
+    try:
+        controller.reply_via_agent(ticket, message=message)
+    finally:
+        frappe.flags[SYSTEM_NOTICE_FLAG] = False
 
 
 def duplicate_list_retain_timestamp(doctype, activities: list, target: str, controller):
@@ -504,9 +518,10 @@ def split_ticket(subject: str, communication_id: str):
     new_ticket_link = frappe.utils.get_url("/helpdesk/tickets/" + str(new_ticket))
 
     controller = get_controller("HD Ticket")
-    controller.reply_via_agent(
+    _send_system_notice(
+        controller,
         ticket_doc,
-        message=_(
+        _(
             "This ticket has been split to a new ticket. Please follow up on ticket <a href={0}>#{1}</a>."
         ).format(new_ticket_link, new_ticket),
     )
