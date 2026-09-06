@@ -265,6 +265,28 @@ def draft_knowledge_reply(
 ) -> dict:
     """Draft a reply grounded in the approved knowledge library."""
     articles = search_knowledge(question, limit=limit, category=category)
+    return _draft_from_articles(
+        ticket_id, question, articles, question_type, language, idempotency_key
+    )
+
+
+def _confidence(articles) -> float:
+    """How well the best source covers the question, 0 to 1.
+
+    "Had a source" is not a quality: a policy that auto-sends above a
+    threshold (Wave 25) must be weighing how much of the question the article
+    actually covers, which is the relevance the search ranks by. A row that
+    reports none is taken at face value as a full match, the old reading.
+    """
+    if not articles:
+        return 0
+    return max(flt(article.get("relevance", 1)) for article in articles)
+
+
+def _draft_from_articles(
+    ticket_id, question, articles, question_type, language, idempotency_key
+) -> dict:
+    """Draft from articles already searched, so one suggestion searches once."""
     sources, knowledge = _approved_knowledge(articles)
     # The call's own route, not the bare default: a knowledge reply or a
     # common question follows the order the administrator wrote for it, and
@@ -289,7 +311,7 @@ def draft_knowledge_reply(
         question_type=question_type,
         language=language,
         sources=sources,
-        confidence=1 if sources else 0,
+        confidence=_confidence(articles),
         provider=reply["provider"],
         model_version=reply["model_version"],
         prompt_version=reply["prompt_version"],
@@ -529,10 +551,13 @@ def suggest_reply(ticket_id: str) -> dict:
     if extraction and _missing_of(extraction):
         return _with_sources(draft_completion_request(extraction.name))
 
+    # One search: the same rows gate the suggestion and ground it, rather
+    # than a scan to decide and a second scan to draft.
     question = ai_generation.ticket_text(ticket_id)
-    if question and search_knowledge(question, limit=1):
+    articles = search_knowledge(question, limit=3) if question else []
+    if articles:
         return _with_sources(
-            draft_knowledge_reply(ticket_id=ticket_id, question=question)
+            _draft_from_articles(ticket_id, question, articles, None, None, None)
         )
 
     return {
