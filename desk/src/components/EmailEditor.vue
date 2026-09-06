@@ -172,18 +172,33 @@
             :key="source.article"
           >
             <span v-if="index">, </span>
-            <router-link
-              class="underline hover:text-ink-gray-6"
-              target="_blank"
-              :to="{ name: 'Article', params: { articleId: source.article } }"
-              >{{ source.title }}</router-link
-            >
-            <!-- The article moved after the draft was written, so the agent has
-                 to re-read it before approving. -->
-            <span v-if="source.stale">
-              ({{ __("ändrad sedan utkastet skrevs") }})</span
-            >
+            <!-- A deleted article gets its title but no link: the page it would
+                 open is gone, and "no longer in the library" tells the agent
+                 this is not the same thing as a renamed one. -->
+            <template v-if="source.missing">
+              <span>{{ source.title }}</span>
+              <span> ({{ __("finns inte längre i biblioteket") }})</span>
+            </template>
+            <template v-else>
+              <router-link
+                class="underline hover:text-ink-gray-6"
+                target="_blank"
+                :to="{ name: 'Article', params: { articleId: source.article } }"
+                >{{ source.title }}</router-link
+              >
+              <!-- The article moved after the draft was written, so the agent
+                   has to re-read it before approving. -->
+              <span v-if="source.stale">
+                ({{ __("ändrad sedan utkastet skrevs") }})</span
+              >
+            </template>
           </template>
+          <!-- The check against the library did not answer. Said out loud, in
+               the same grey, so a clean list is never mistaken for a checked
+               one. -->
+          <span v-if="sourcesCheck === 'failed'">
+            &mdash; {{ __("kunde inte kontrolleras mot biblioteket") }}</span
+          >
         </div>
         <!-- Attachments -->
         <AttachmentList
@@ -554,6 +569,8 @@ function insertSavedReply(reply: RenderedSavedReply) {
 
 /** Confirmed replace: the new reply's body and actions stand alone. */
 function replaceSavedReply(reply: RenderedSavedReply) {
+  // The suggestion is gone with the text; a saved reply rests on no articles.
+  clearReplySources();
   newEmail.value = reply.message + (emailSignature.value ?? "");
   savedReplyActionsRef.value?.add(reply);
   focusEditorAtStart();
@@ -634,24 +651,63 @@ type ReplySource = {
   article: string;
   title: string;
   stale?: boolean;
+  /** The approved version in the library now; null once the article is gone. */
+  current_version?: number | null;
+  /** Set by the check: the article no longer exists, so no link is offered. */
+  missing?: boolean;
 };
 
 /** The articles the suggestion in the editor rests on, empty until one arrives. */
 const replySources = ref<ReplySource[]>([]);
 
 /**
+ * What the library check said about `replySources`: nothing yet, an answer,
+ * or no answer. Only "checked" means the titles have been compared with the
+ * library; the interface says so for "failed" rather than looking clean.
+ */
+const sourcesCheck = ref<"unchecked" | "checked" | "failed">("unchecked");
+
+/**
+ * The draft the citation currently belongs to. A check answers for one draft;
+ * if the citation has been cleared or replaced by the time the answer lands,
+ * the answer is for a draft nobody is looking at and is dropped.
+ */
+let citedDraftId: string | null = null;
+
+/** The citation goes with the text it came from: emptied whenever that is. */
+function clearReplySources() {
+  citedDraftId = null;
+  replySources.value = [];
+  sourcesCheck.value = "unchecked";
+}
+
+/**
  * Ask for the staleness of the cited articles, which only the server can know:
  * it compares the version the draft read with the one approved now. Failing
- * this leaves the titles standing without a warning rather than hiding them.
+ * this leaves the titles standing with a note that they were not checked.
  */
 function markStaleSources(draftId: string) {
+  citedDraftId = draftId;
+  sourcesCheck.value = "unchecked";
   call("helpdesk.api.ai_reply.get_reply_sources", { draft_id: draftId })
     .then((resolved: ReplySource[]) => {
-      if (Array.isArray(resolved) && resolved.length) {
-        replySources.value = resolved;
+      if (citedDraftId !== draftId) return;
+      // We asked about titles we know the draft has; an empty answer has not
+      // checked them.
+      if (!Array.isArray(resolved) || !resolved.length) {
+        sourcesCheck.value = "failed";
+        return;
       }
+      replySources.value = resolved.map((source) => ({
+        ...source,
+        missing: source.current_version == null,
+      }));
+      sourcesCheck.value = "checked";
     })
-    .catch(() => {});
+    .catch(() => {
+      if (citedDraftId !== draftId) return;
+      sourcesCheck.value = "failed";
+    });
 }
 
 const suggestReply = createResource({
@@ -663,6 +719,8 @@ const suggestReply = createResource({
     reason?: string;
     sources?: ReplySource[];
   }) => {
+    // A newer draft than any check still in flight: the older answer is dropped.
+    clearReplySources();
     replySources.value = Array.isArray(draft?.sources) ? draft.sources : [];
     if (draft?.name && replySources.value.length) markStaleSources(draft.name);
     if (!draft?.body) {
@@ -912,6 +970,7 @@ function addToReply(
     });
   }
 
+  clearReplySources();
   nextTick(() => {
     newEmail.value = getInitialContent();
   });
@@ -921,6 +980,7 @@ function addToReply(
 // Staged actions are left to `submit()`, which unstages them either way
 function resetState() {
   outboundDraft.value = null;
+  clearReplySources();
   newEmail.value = emailSignature.value ? emailSignature.value : null;
   attachments.value = [];
   quotedContent.value = null;
@@ -930,7 +990,7 @@ function resetState() {
 
 function handleDiscard() {
   outboundDraft.value = null;
-  replySources.value = [];
+  clearReplySources();
   attachments.value = [];
   savedReplyActionsRef.value?.clear();
   newEmail.value = getInitialContent();
@@ -985,6 +1045,7 @@ function handleDelete(e: KeyboardEvent) {
     e.preventDefault();
 
     editorRef.value?.editor?.commands?.clearContent();
+    clearReplySources();
     newEmail.value = null;
     quotedContent.value = null;
 
