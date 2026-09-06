@@ -212,6 +212,19 @@ def reply_translated(
             _("Översättningen är redan skickad till kunden."),
             title=_("Redan skickad"),
         )
+    # Wave 25b (LANG-09): the archive copy of a reply an agent already sent in
+    # the customer's language. The customer has their answer; sending this row
+    # would mail them a machine's rendering of it, from the one door whose whole
+    # promise is that pressing send is a review.
+    if doc.get("sent_side") == "Original":
+        frappe.throw(
+            _(
+                "Det här är husets arbetsspråkskopia av ett svar som redan "
+                "skickats på kundens språk. Kunden har fått svaret — kopian "
+                "finns för arkivet och kan inte skickas."
+            ),
+            title=_("Arkivkopia"),
+        )
 
     message = (doc.translated_text or "").strip()
     if not message:

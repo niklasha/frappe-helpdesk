@@ -143,6 +143,7 @@ def record_translation(
     prompt_version: str | int | None = None,
     idempotency_key: str | None = None,
     adopted_from: str | None = None,
+    sent_side: str = "Translation",
     engine: str | None = None,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
@@ -171,6 +172,14 @@ def record_translation(
     — a row that bought nothing, and whose provenance is the row it names. It
     keeps the two facts apart that one row used to carry: which translation
     was paid for, and which message reads through it.
+
+    `sent_side` records which of the row's two texts actually left the house.
+    Nearly always the translation: an agent writes the working language and the
+    customer receives our rendering of it. The exception is a reply the agent
+    wrote in the customer's language themselves, where the original is what was
+    sent and the translation beside it is the archive's copy — a row the thread
+    must not display, and `reply_translated` must not send, as though the
+    customer had read the translation.
     """
     frappe.has_permission("HD Ticket", "read", doc=ticket_id, throw=True)
     _validate_message(message, ticket_id)
@@ -208,6 +217,7 @@ def record_translation(
             "prompt_version": prompt_version,
             "idempotency_key": idempotency_key,
             "adopted_from": adopted_from,
+            "sent_side": sent_side,
             **costs,
         }
     )
@@ -572,6 +582,8 @@ TRANSLATION_VIEW_FIELDS = (
     # Whose translation this row wears, when it bought none of its own. The
     # band uses it to stay silent about words the thread already shows.
     "adopted_from",
+    # Which of the two texts the customer actually received (Wave 25b).
+    "sent_side",
 )
 
 
