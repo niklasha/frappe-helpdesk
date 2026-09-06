@@ -34,8 +34,27 @@
 
       <div class="flex gap-2 items-center">
         <div class="gap-0.5 flex items-center">
+          <!-- QUEUE-02: the demo runs with the outgoing queue suspended, so a
+               composed mail can sit unsent for days. Where the thread shows the
+               delivery status it says so, and a message the queue never saw is
+               left exactly as it was. -->
+          <Tooltip
+            v-if="isHeld && !ticket?.doc?.via_customer_portal"
+            :text="
+              __(
+                'Meddelandet är skrivet och ligger i utskickskön. Det skickas för hand från Frappe-desken.'
+              )
+            "
+          >
+            <Badge
+              :label="__('Väntar på utskick')"
+              variant="subtle"
+              theme="orange"
+              class="me-1.5"
+            />
+          </Tooltip>
           <Badge
-            v-if="status.label && !ticket?.doc?.via_customer_portal"
+            v-else-if="status.label && !ticket?.doc?.via_customer_portal"
             :label="__(status.label)"
             variant="subtle"
             :theme="status.color"
@@ -117,14 +136,24 @@
         <span>
           {{
             showOriginal
-              ? __("Kundens egna ord ({0})").replace(
-                  "{0}",
-                  translation.source_language
-                )
-              : __("Maskinöversatt från {0}").replace(
-                  "{0}",
-                  translation.source_language
-                )
+              ? (outboundTranslation
+                  ? __("Handläggarens original ({0})").replace(
+                      "{0}",
+                      translation.source_language
+                    )
+                  : __("Kundens egna ord ({0})").replace(
+                      "{0}",
+                      translation.source_language
+                    ))
+              : (outboundTranslation
+                  ? __("Skickat på {0}").replace(
+                      "{0}",
+                      translation.target_language
+                    )
+                  : __("Maskinöversatt från {0}").replace(
+                      "{0}",
+                      translation.source_language
+                    ))
           }}
         </span>
         <span v-if="!showOriginal && translation.model_version">
@@ -158,6 +187,7 @@
 <script setup lang="ts">
 import { AttachmentItem } from "@/components";
 import { useScreenSize } from "@/composables/screen";
+import { useTicketDelivery } from "@/composables/useTicketDelivery";
 import { useTicketTranslations } from "@/composables/useTicketTranslations";
 import { useAuthStore } from "@/stores/auth";
 import { TicketSymbol } from "@/types";
@@ -200,10 +230,22 @@ const ticket = inject(TicketSymbol)!;
 // `.value` in script scope: the injected ticket is a ComputedRef, which the
 // template unwraps and this does not. Reading it without unwrapping is what
 // made the triage panel fetch nothing at all for a fortnight.
-const { forMessage } = useTicketTranslations(
+const { forMessage, forOutboundMessage } = useTicketTranslations(
   computed(() => ticket.value?.doc?.name)
 );
-const translation = computed(() => forMessage(name));
+// The customer's message and the desk's reply get the same band, but they
+// are different rows: an inbound message never has an outbound translation and
+// the other way round, so one of these is always undefined.
+const inboundTranslation = computed(() => forMessage(name));
+const outboundTranslation = computed(() => forOutboundMessage(name));
+const translation = computed(
+  () => inboundTranslation.value ?? outboundTranslation.value
+);
+const { forMessage: deliveryForMessage } = useTicketDelivery(
+  computed(() => ticket.value?.doc?.name)
+);
+const isHeld = computed(() => Boolean(deliveryForMessage(name)?.held));
+
 const showOriginal = ref(false);
 
 const auth = storeToRefs(useAuthStore());

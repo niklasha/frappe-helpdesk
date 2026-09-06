@@ -56,13 +56,32 @@ export function useTicketTranslations(ticketId: ComputedRef<string | undefined>)
     return index;
   });
 
+  // The desk's own replies, indexed the same way. Kept as a second index rather
+  // than folded into the first: an inbound band shows the customer's words and
+  // an outbound one the agent's, and a caller must not get one where it asked
+  // for the other.
+  const byOutboundMessage = computed(() => {
+    const rows: MessageTranslation[] = resource.value?.data ?? [];
+    const index = new Map<string, MessageTranslation>();
+    for (const row of rows) {
+      if (row.direction === "Outbound" && row.message && row.translated_text) {
+        index.set(row.message, row);
+      }
+    }
+    return index;
+  });
+
   function forMessage(message: string | undefined) {
     return message ? byMessage.value.get(message) : undefined;
+  }
+
+  function forOutboundMessage(message: string | undefined) {
+    return message ? byOutboundMessage.value.get(message) : undefined;
   }
 
   function reload() {
     resource.value?.reload();
   }
 
-  return { byMessage, forMessage, reload };
+  return { byMessage, byOutboundMessage, forMessage, forOutboundMessage, reload };
 }
