@@ -19,23 +19,38 @@ GENERATED_COMPLETION_REQUEST = "generated_completion_request"
 
 # What a customer calls the things the extraction reports as missing. The raw
 # column names are the database's own vocabulary and must never reach a
-# customer as English words, so they are translated through this explicit map
-# and only an unknown field falls back to its raw name.
-CUSTOMER_FIELD_NAMES = {
-    "customer": "vilket företag ordern gäller",
-    "product": "vilken produkt det gäller",
-    "quantity": "hur många ni vill beställa",
-    "size": "vilka storlekar ni vill ha",
-    "colour": "vilken färg ni vill ha",
-    "color": "vilken färg ni vill ha",
-    "delivery_date": "vilket leveransdatum ni önskar",
-    "delivery_address": "vilken leveransadress ordern ska till",
-    "reference": "vilken referens vi ska märka ordern med",
-    "material": "vilket material det gäller",
-    "artwork": "vilket tryckoriginal vi ska använda",
-    "email": "vilken e-postadress vi ska skicka orderbekräftelsen till",
-    "phone": "vilket telefonnummer vi når er på",
-}
+# customer as English words. The keys are what the extraction really emits
+# (order_extraction.EXTRACTION_FIELDS plus the customer the ticket resolves),
+# and every name goes through `_()` so a site in another language can
+# translate it; Swedish is the default wording, not the only one. Built per
+# call rather than at import, because translation follows the request.
+def _customer_field_names() -> dict:
+    return {
+        "customer": _("vilket företag ordern gäller"),
+        "product": _("vilken produkt det gäller"),
+        "quantity": _("antal"),
+        "size": _("storlek"),
+        "colors": _("färg"),
+        "production_option": _("vilket utförande ni vill ha"),
+        "delivery_information": _("leveransadress och önskat leveransdatum"),
+        "original_files": _("tryckoriginal"),
+    }
+
+
+# A field nobody has named for the customer is still not shown as a column
+# name; it is asked for as a detail of the order, which is true and readable.
+UNNAMED_FIELD = "en uppgift om er order som saknas"
+
+
+def _customer_names(missing: list) -> list:
+    """Return what to call each missing field to the customer, no raw keys, no repeats."""
+    names = _customer_field_names()
+    named = []
+    for field in missing:
+        name = names.get(field) or _(UNNAMED_FIELD)
+        if name not in named:
+            named.append(name)
+    return named
 
 # The question type that marks a recurring question, and so selects the prompt
 # tuned for one. Answering "hur lång är leveranstiden" is a different job from
@@ -250,6 +265,28 @@ def draft_knowledge_reply(
 ) -> dict:
     """Draft a reply grounded in the approved knowledge library."""
     articles = search_knowledge(question, limit=limit, category=category)
+    return _draft_from_articles(
+        ticket_id, question, articles, question_type, language, idempotency_key
+    )
+
+
+def _confidence(articles) -> float:
+    """How well the best source covers the question, 0 to 1.
+
+    "Had a source" is not a quality: a policy that auto-sends above a
+    threshold (Wave 25) must be weighing how much of the question the article
+    actually covers, which is the relevance the search ranks by. A row that
+    reports none is taken at face value as a full match, the old reading.
+    """
+    if not articles:
+        return 0
+    return max(flt(article.get("relevance", 1)) for article in articles)
+
+
+def _draft_from_articles(
+    ticket_id, question, articles, question_type, language, idempotency_key
+) -> dict:
+    """Draft from articles already searched, so one suggestion searches once."""
     sources, knowledge = _approved_knowledge(articles)
     # The call's own route, not the bare default: a knowledge reply or a
     # common question follows the order the administrator wrote for it, and
@@ -274,7 +311,7 @@ def draft_knowledge_reply(
         question_type=question_type,
         language=language,
         sources=sources,
-        confidence=1 if sources else 0,
+        confidence=_confidence(articles),
         provider=reply["provider"],
         model_version=reply["model_version"],
         prompt_version=reply["prompt_version"],
@@ -406,10 +443,13 @@ def generate_completion_request(
     instructions, prompt_version = ai_generation._prompt(
         ai_generation.COMPLETION_REQUEST
     )
+    # The engine is handed each field the way the customer would name it, next
+    # to the key the extraction uses, so it asks for "antal" and not "quantity".
+    named = zip(missing, _customer_names(missing))
     body, response = ai_generation.generate_text(
         engines,
         instructions,
-        ", ".join(missing),
+        "\n".join(f"{field}: {name}" for field, name in named),
         COMPLETION_REQUEST_HINT,
         call=ai_generation.COMPLETION_REQUEST,
     )
@@ -433,20 +473,29 @@ def generate_completion_request(
 
 
 def _completion_request_body(missing: list) -> str:
-    """Ask, in one Swedish sentence, for what the order still lacks.
+    """Ask, in prose, for what the order still lacks.
 
     The customer reads this text, so it names the things the way they would:
-    no field names, no parentheses and no bullet list of column names.
+    no field names, no parentheses and no bullet list of column names. The
+    things are listed as nouns after a colon rather than chained as indirect
+    questions, so five missing fields still read as one sentence.
+
+    An empty list produces no sentence: there is nothing to ask for, and the
+    callers refuse such an extraction before they get here
+    (`_missing_order_fields`), so an empty string here is a guard, not a reply.
     """
-    named = [CUSTOMER_FIELD_NAMES.get(field, field) for field in missing]
+    named = _customer_names(missing)
+    if not named:
+        return ""
     if len(named) == 1:
         asked = named[0]
     else:
-        asked = ", ".join(named[:-1]) + " och " + named[-1]
-    return (
-        "Hej! För att vi ska kunna gå vidare med er order behöver vi veta "
-        f"{asked}."
-    )
+        asked = ", ".join(named[:-1]) + " " + _("och") + " " + named[-1]
+    return _(
+        "Hej! För att vi ska kunna gå vidare med er order behöver vi följande "
+        "uppgifter: {asked}. Svara gärna på det här mejlet så sätter vi igång "
+        "så snart vi har dem."
+    ).format(asked=asked)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -502,10 +551,13 @@ def suggest_reply(ticket_id: str) -> dict:
     if extraction and _missing_of(extraction):
         return _with_sources(draft_completion_request(extraction.name))
 
+    # One search: the same rows gate the suggestion and ground it, rather
+    # than a scan to decide and a second scan to draft.
     question = ai_generation.ticket_text(ticket_id)
-    if question and search_knowledge(question, limit=1):
+    articles = search_knowledge(question, limit=3) if question else []
+    if articles:
         return _with_sources(
-            draft_knowledge_reply(ticket_id=ticket_id, question=question)
+            _draft_from_articles(ticket_id, question, articles, None, None, None)
         )
 
     return {
