@@ -146,15 +146,36 @@
       v-if="!translation || (isOutbound && !showOriginal)"
       :content="content"
     />
+    <!-- LANG-10: the other side of the row. For a reply the desk translated
+         that is the agent's original; for a reply an agent wrote and sent in
+         the customer's language it is the house's working-language copy, which
+         is the side the machine made. -->
     <p v-else class="whitespace-pre-line break-words text-ink-gray-8">
-      {{ showOriginal ? translation.original_text : translation.translated_text }}
+      {{ otherSideText }}
     </p>
     <div
       v-if="translation"
       class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-gray-4"
     >
       <LanguagesIcon class="h-3.5 w-3.5 shrink-0" />
-      <span>
+      <span v-if="isArchiveCopy">
+        {{
+          showOriginal
+            ? (translation.target_language
+                ? __("Husets kopia, maskinöversatt för arkivet ({0})").replace(
+                    "{0}",
+                    translation.target_language
+                  )
+                : __("Husets kopia, maskinöversatt för arkivet"))
+            : (translation.source_language
+                ? __("Skrivet och skickat på {0}").replace(
+                    "{0}",
+                    translation.source_language
+                  )
+                : __("Skrivet och skickat på kundens språk"))
+        }}
+      </span>
+      <span v-else>
         {{
           showOriginal
             ? (isOutbound
@@ -188,7 +209,15 @@
         class="ms-auto shrink-0"
         variant="ghost"
         size="sm"
-        :label="showOriginal ? __('Visa översättning') : __('Visa original')"
+        :label="
+          isArchiveCopy
+            ? showOriginal
+              ? __('Visa det som skickades')
+              : __('Visa arbetsspråkskopian')
+            : showOriginal
+              ? __('Visa översättning')
+              : __('Visa original')
+        "
         @click.stop="showOriginal = !showOriginal"
       />
     </div>
@@ -267,6 +296,23 @@ const translation = computed(() =>
   sentOrReceived === "Sent" ? forOutboundMessage(name) : forMessage(name)
 );
 const isOutbound = computed(() => translation.value?.direction === "Outbound");
+// Which side of the row left the house. A drafted reply always mails the
+// translation; an archive copy is of a reply the agent wrote and sent
+// themselves, so there the original is what the customer read and the
+// translation is the machine's work that nobody has reviewed. Captioning the
+// two the same way would tell the agent the customer received the Swedish.
+const isArchiveCopy = computed(
+  () => isOutbound.value && translation.value?.sent_side === "Original"
+);
+// The text behind the toggle: the agent's original for a translated reply, the
+// working-language copy for an archived one, the machine's Swedish for an
+// inbound message the customer wrote.
+const otherSideText = computed(() => {
+  const row = translation.value;
+  if (!row) return "";
+  if (isArchiveCopy.value) return row.translated_text;
+  return showOriginal.value ? row.original_text : row.translated_text;
+});
 const { forMessage: deliveryForMessage } = useTicketDelivery(
   computed(() => ticket.value?.doc?.name)
 );

@@ -919,8 +919,30 @@ function canSend(): boolean {
   return true;
 }
 
+/**
+ * LANG-08: on a ticket answered in another language, the first press of Send
+ * translates instead of sending. The agent then reads what the customer will
+ * actually receive and presses Send again — and that second press is the
+ * review Wave 22 defined, unchanged.
+ *
+ * A ticket answered in the working language never comes here, and neither
+ * does an agent who already used «Svara på kundens språk»: they have a draft,
+ * and translating a translation is how a reply loses its meaning.
+ */
+function draftBeforeSending(): boolean {
+  if (!needsOutboundTranslation.value) return false;
+  if (outboundDraft.value?.translation) return false;
+  if (draftOutbound.loading) return true;
+  toast.info(
+    __("Svaret översätts till kundens språk. Läs det och skicka igen.")
+  );
+  draftOutbound.submit();
+  return true;
+}
+
 function submitMail() {
   if (!canSend()) return false;
+  if (draftBeforeSending()) return;
   // A drafted translation is sent through the door that reviews and sends in
   // the same motion; without one this is the ordinary reply.
   if (outboundDraft.value?.translation) {
@@ -932,6 +954,7 @@ function submitMail() {
 
 function submitMailWithStatus(status: string) {
   if (!canSend()) return false;
+  if (draftBeforeSending()) return;
   if (outboundDraft.value?.translation) {
     pendingStatus.value = status;
     replyTranslated.submit(status);

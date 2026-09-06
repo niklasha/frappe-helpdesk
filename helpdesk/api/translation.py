@@ -685,3 +685,41 @@ def draft_outbound(ticket_id: str, text: str) -> dict:
         "reviewed": row.get("reviewed") or 0,
         "sent_on": row.get("sent_on"),
     }
+
+
+def hold_untranslated_reply(ticket_id: str, message: str) -> dict | None:
+    """Draft the translation of a reply that must not go out as written.
+
+    LANG-08: `reply_translated` has been the careful door since Wave 22, and
+    the ordinary Send button is the careless one beside it — it puts whatever
+    the editor holds on the wire. On a ticket answered in another language,
+    text in the working language is text the customer cannot read, sent by a
+    desk that promises to answer in theirs.
+
+    So the reply is held rather than dropped: the working-language text is
+    drafted into the customer's language and the unsent, unreviewed row is
+    returned, which is exactly what the agent should have had in the first
+    place. The caller refuses the send and points at that row.
+
+    Nothing is held when the ticket is answered in the working language, nor
+    when the text is already in the customer's language — the agent who used
+    the language button, or wrote the customer's language themselves, is not
+    stopped, and nobody pays to translate a language into itself.
+    """
+    reply = reply_language(ticket_id)
+    if not reply["needs_translation"]:
+        return None
+
+    plain = frappe.utils.strip_html_tags(message or "").strip()
+    if not plain:
+        return None
+    # Only the house's own language is held. An unrecognised text is left
+    # alone: guessing wrong here would block a reply that is perfectly fine.
+    if detect_language_code(plain) != reply["working_language"]:
+        return None
+
+    return generate_outbound_translation(
+        ticket_id=ticket_id,
+        original_text=plain,
+        target_language=reply["language"],
+    )

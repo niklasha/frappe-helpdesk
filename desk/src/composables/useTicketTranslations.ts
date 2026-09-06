@@ -5,6 +5,8 @@ export interface MessageTranslation {
   name: string;
   message: string | null;
   direction: string;
+  /** "Original" when the words the agent wrote are the ones the customer got. */
+  sent_side: string | null;
   source_language: string | null;
   target_language: string | null;
   sent_on: string | null;
@@ -70,9 +72,16 @@ export function useTicketTranslations(ticketId: ComputedRef<string | undefined>)
         row.direction === "Outbound" &&
         row.message &&
         row.translated_text &&
-        row.sent_on
+        // Sent means the desk translated the reply and mailed the translation.
+        // The archive copy of a foreign reply an agent wrote and sent
+        // themselves never gets a sent_on — nothing was ever mailed from it —
+        // and belongs in the thread all the same, so sent_side lets it in.
+        (row.sent_on || row.sent_side === "Original")
       ) {
-        index.set(row.message, row);
+        // A mailed translation outranks an archive copy of the same message:
+        // it is the text the customer actually received.
+        const seen = index.get(row.message);
+        if (!seen?.sent_on || row.sent_on) index.set(row.message, row);
       }
     }
     return index;

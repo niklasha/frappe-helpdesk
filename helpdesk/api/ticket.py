@@ -142,7 +142,29 @@ def reply_and_set_status(
             title=_("Okänd status"),
         )
 
+    from helpdesk.api.translation import hold_untranslated_reply
+
     frappe.has_permission("HD Ticket", "write", doc=ticket_id, throw=True)
+
+    # LANG-08: a ticket answered in another language must not receive the
+    # working language straight off the editor. The reply is not lost — it is
+    # drafted into the customer’s language and left waiting for the review that
+    # `reply_translated` performs, which is the door this send should have used.
+    held = hold_untranslated_reply(ticket_id, message)
+    if held:
+        # The refusal below rolls the request back, and the draft must survive
+        # it: a reply that is stopped and then thrown away is a reply the agent
+        # has to write twice. Nothing else has been written at this point, so
+        # the commit persists the draft and nothing more.
+        frappe.db.commit()
+        frappe.throw(
+            _(
+                "Kunden läser {0}. Svaret är översatt och väntar på din "
+                "granskning — läs översättningen och skicka den."
+            ).format(held.get("target_language") or _("ett annat språk")),
+            title=_("Svaret är inte översatt"),
+        )
+
     ticket = frappe.get_doc("HD Ticket", ticket_id)
 
     ticket.reply_via_agent(
