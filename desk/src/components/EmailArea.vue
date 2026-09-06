@@ -35,19 +35,39 @@
       <div class="flex gap-2 items-center">
         <div class="gap-0.5 flex items-center">
           <!-- QUEUE-02: the demo runs with the outgoing queue suspended, so a
-               composed mail can sit unsent for days. Where the thread shows the
-               delivery status it says so, and a message the queue never saw is
-               left exactly as it was. -->
-          <Tooltip
-            v-if="isHeld && !ticket?.doc?.via_customer_portal"
-            :text="
-              __(
-                'Meddelandet är skrivet och ligger i utskickskön. Det skickas för hand från Frappe-desken.'
-              )
-            "
-          >
+               composed mail can sit unsent for days. The queue's own state is
+               named whatever it is — held, failed, partly out — regardless of
+               how the ticket was raised, because a portal ticket's replies are
+               ordinary mail too. A message the queue never saw, or one in a
+               state not named here, falls through to the badge the thread
+               always showed. The Tooltip sits on a non-focusable span, so the
+               same sentence is on the badge itself for keyboard and screen
+               reader users. -->
+          <Tooltip v-if="isHeld" :text="heldExplanation">
             <Badge
               :label="__('Väntar på utskick')"
+              :aria-label="heldExplanation"
+              :title="heldExplanation"
+              variant="subtle"
+              theme="orange"
+              class="me-1.5"
+            />
+          </Tooltip>
+          <Tooltip v-else-if="queueFailed" :text="failedExplanation">
+            <Badge
+              :label="__('Kunde inte skickas')"
+              :aria-label="failedExplanation"
+              :title="failedExplanation"
+              variant="subtle"
+              theme="red"
+              class="me-1.5"
+            />
+          </Tooltip>
+          <Tooltip v-else-if="queuePartial" :text="partialExplanation">
+            <Badge
+              :label="__('Delvis skickat')"
+              :aria-label="partialExplanation"
+              :title="partialExplanation"
               variant="subtle"
               theme="orange"
               class="me-1.5"
@@ -118,56 +138,60 @@
     <!-- LANG-01/02/03: the message reads in the language the agent works in,
          and the words the customer actually sent stay one click away. Where
          there is no translation this renders exactly what it always did. -->
-    <EmailContent v-if="!translation" :content="content" />
-    <template v-else>
-      <p
-        v-if="showOriginal"
-        class="whitespace-pre-line break-words text-ink-gray-8"
-      >
-        {{ translation.original_text }}
-      </p>
-      <p v-else class="whitespace-pre-line break-words text-ink-gray-8">
-        {{ translation.translated_text }}
-      </p>
-      <div
-        class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-gray-4"
-      >
-        <LanguagesIcon class="h-3.5 w-3.5 shrink-0" />
-        <span>
-          {{
-            showOriginal
-              ? (outboundTranslation
-                  ? __("Handläggarens original ({0})").replace(
-                      "{0}",
-                      translation.source_language
-                    )
-                  : __("Kundens egna ord ({0})").replace(
-                      "{0}",
-                      translation.source_language
-                    ))
-              : (outboundTranslation
-                  ? __("Skickat på {0}").replace(
-                      "{0}",
-                      translation.target_language
-                    )
-                  : __("Maskinöversatt från {0}").replace(
-                      "{0}",
-                      translation.source_language
-                    ))
-          }}
-        </span>
-        <span v-if="!showOriginal && translation.model_version">
-          · {{ translation.model_version }}
-        </span>
-        <Button
-          class="ms-auto shrink-0"
-          variant="ghost"
-          size="sm"
-          :label="showOriginal ? __('Visa översättning') : __('Visa original')"
-          @click.stop="showOriginal = !showOriginal"
-        />
-      </div>
-    </template>
+    <!-- LANG-06: a sent answer is shown as it was sent. The Communication is
+         the mail the customer got — formatting, signature, quoted history —
+         so EmailContent renders it whenever the sent words are shown; only the
+         toggle to the agent's original swaps in the plain original_text. -->
+    <EmailContent
+      v-if="!translation || (isOutbound && !showOriginal)"
+      :content="content"
+    />
+    <p v-else class="whitespace-pre-line break-words text-ink-gray-8">
+      {{ showOriginal ? translation.original_text : translation.translated_text }}
+    </p>
+    <div
+      v-if="translation"
+      class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-gray-4"
+    >
+      <LanguagesIcon class="h-3.5 w-3.5 shrink-0" />
+      <span>
+        {{
+          showOriginal
+            ? (isOutbound
+                ? (translation.source_language
+                    ? __("Handläggarens original ({0})").replace(
+                        "{0}",
+                        translation.source_language
+                      )
+                    : __("Handläggarens original"))
+                : __("Kundens egna ord ({0})").replace(
+                    "{0}",
+                    translation.source_language
+                  ))
+            : (isOutbound
+                ? (translation.target_language
+                    ? __("Skickat på {0}").replace(
+                        "{0}",
+                        translation.target_language
+                      )
+                    : __("Skickat på kundens språk"))
+                : __("Maskinöversatt från {0}").replace(
+                    "{0}",
+                    translation.source_language
+                  ))
+        }}
+      </span>
+      <span v-if="!showOriginal && translation.model_version">
+        · {{ translation.model_version }}
+      </span>
+      <Button
+        class="ms-auto shrink-0"
+        variant="ghost"
+        size="sm"
+        :label="showOriginal ? __('Visa översättning') : __('Visa original')"
+        @click.stop="showOriginal = !showOriginal"
+      />
+    </div>
     <div class="flex flex-wrap gap-2">
       <AttachmentItem
         v-for="a in attachments"
@@ -190,6 +214,7 @@ import { useScreenSize } from "@/composables/screen";
 import { useTicketDelivery } from "@/composables/useTicketDelivery";
 import { useTicketTranslations } from "@/composables/useTicketTranslations";
 import { useAuthStore } from "@/stores/auth";
+import { __ } from "@/translation";
 import { TicketSymbol } from "@/types";
 import { dateFormat, dateTooltipFormat, timeAgo } from "@/utils";
 import { Dropdown } from "frappe-ui";
@@ -222,6 +247,7 @@ const {
   content,
   name,
   deliveryStatus,
+  sentOrReceived,
 } = props.activity;
 
 const emit = defineEmits(["reply"]);
@@ -234,17 +260,35 @@ const { forMessage, forOutboundMessage } = useTicketTranslations(
   computed(() => ticket.value?.doc?.name)
 );
 // The customer's message and the desk's reply get the same band, but they
-// are different rows: an inbound message never has an outbound translation and
-// the other way round, so one of these is always undefined.
-const inboundTranslation = computed(() => forMessage(name));
-const outboundTranslation = computed(() => forOutboundMessage(name));
-const translation = computed(
-  () => inboundTranslation.value ?? outboundTranslation.value
+// are different rows. The row is chosen by the message's own direction — a
+// Sent message takes the outbound row, a received one the inbound row — so the
+// row rendered and the caption describing it are always the same row.
+const translation = computed(() =>
+  sentOrReceived === "Sent" ? forOutboundMessage(name) : forMessage(name)
 );
+const isOutbound = computed(() => translation.value?.direction === "Outbound");
 const { forMessage: deliveryForMessage } = useTicketDelivery(
   computed(() => ticket.value?.doc?.name)
 );
-const isHeld = computed(() => Boolean(deliveryForMessage(name)?.held));
+const delivery = computed(() => deliveryForMessage(name));
+// Held means "waiting for a human to send it" and the endpoint decides that;
+// the other states are named here so they never read as delivered.
+const isHeld = computed(() => Boolean(delivery.value?.held));
+const queueFailed = computed(() =>
+  ["Error", "Expired"].includes(delivery.value?.status ?? "")
+);
+const queuePartial = computed(
+  () => delivery.value?.status === "Partially Sent"
+);
+const heldExplanation = __(
+  "Meddelandet är skrivet och ligger i utskickskön. Det skickas för hand från Frappe-desken."
+);
+const failedExplanation = __(
+  "Utskickskön kunde inte skicka meddelandet. Kunden har inte fått det; kontrollera kön i Frappe-desken."
+);
+const partialExplanation = __(
+  "Meddelandet nådde en del av mottagarna men inte alla. Skicka det inte om för hand; kontrollera kön i Frappe-desken."
+);
 
 const showOriginal = ref(false);
 

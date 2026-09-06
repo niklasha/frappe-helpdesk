@@ -562,6 +562,7 @@ const _activities = computed(() => {
         attachments: email.attachments,
         name: email.name,
         deliveryStatus: email.delivery_status,
+        sentOrReceived: email.sent_or_received,
         isFirstEmail: idx === 0,
       };
     }

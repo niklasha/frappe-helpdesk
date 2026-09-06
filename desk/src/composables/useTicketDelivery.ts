@@ -60,3 +60,15 @@ export function useTicketDelivery(ticketId: ComputedRef<string | undefined>) {
 
   return { byMessage, forMessage, reload };
 }
+
+/**
+ * Refresh the queue's answer for one ticket, if the thread has asked for it.
+ *
+ * The cache above is filled once per ticket and never reloads by itself, so a
+ * reply the agent has just sent would carry no badge — and a badge would stay
+ * after someone hand-sent the mail — until a full page reload. `reloadTicket`
+ * calls this wherever the thread itself refreshes.
+ */
+export function reloadTicketDelivery(ticketId: string) {
+  perTicket.get(ticketId)?.reload();
+}
